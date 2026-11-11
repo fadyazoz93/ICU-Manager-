@@ -12,11 +12,13 @@
   font-family: 'Cairo', 'Segoe UI', Tahoma, -apple-system, sans-serif;
 }
 
-/* Print Enhancements */
+/* ======================================================== */
+/* PRINT MEDIA STYLES                                      */
+/* ======================================================== */
 @media print {
   @page {
-    size: A4 landscape;
-    margin: 10mm 12mm;
+    size: auto;
+    margin: 10mm;
   }
 
   /* Universal print resets */
@@ -74,16 +76,6 @@
     font-size: 8.5pt !important;
   }
 
-  /* Clean print borders */
-  .print-bordered {
-    border: 1px solid #cbd5e1 !important;
-    box-shadow: none !important;
-  }
-
-  .print-shadow-none {
-    box-shadow: none !important;
-  }
-
   /* Printable signature block */
   .report-signature-block {
     display: grid !important;
@@ -92,5 +84,50 @@
     margin-top: 30px !important;
     break-inside: avoid !important;
     page-break-inside: avoid !important;
+  }
+
+  /* ======================================================== */
+  /* PATIENT DETAILS MODAL PRINTING ISOLATION                 */
+  /* When printing from the patient slip modal:               */
+  /* Hide the underlying app and unclip the modal card       */
+  /* ======================================================== */
+  body.patient-modal-active {
+    background-color: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.patient-modal-active #app {
+    display: none !important;
+  }
+
+  body.patient-modal-active .patient-modal-backdrop {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    background-color: #ffffff !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    z-index: auto !important;
+  }
+
+  body.patient-modal-active .patient-modal-card {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 }
