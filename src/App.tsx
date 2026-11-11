@@ -10,8 +10,7 @@ import { DashboardView } from './components/DashboardView';
 import { HistoryView } from './components/HistoryView';
 import { ReportsView } from './components/ReportsView';
 import { PatientDetailsModal } from './components/PatientDetailsModal';
-import { DataModal } from './components/DataModal';
-import { getStoredRecords, syncFromGoogleSheetLive } from './services/storage';
+import { getStoredRecords } from './services/storage';
 import { PatientRecord } from './types/icu';
 
 export default function App() {
@@ -20,7 +19,6 @@ export default function App() {
   const [activeCount, setActiveCount] = useState<number>(0);
   const [prefilledMedicalNo, setPrefilledMedicalNo] = useState<string>('');
   const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
-  const [isDataModalOpen, setIsDataModalOpen] = useState(false);
 
   const updateActiveCount = () => {
     const list = getStoredRecords();
@@ -55,11 +53,11 @@ export default function App() {
   return (
     <div
       dir={isAr ? 'rtl' : 'ltr'}
-      className={`min-h-screen bg-slate-100 text-slate-800 font-sans pb-24 md:pb-12 antialiased selection:bg-teal-500 selection:text-white ${
+      className={`min-h-screen bg-slate-100 text-slate-800 font-sans pb-24 md:pb-12 antialiased selection:bg-teal-500 selection:text-white print:bg-white print:p-0 print:m-0 print:pb-0 ${
         isAr ? 'font-arabic' : ''
       }`}
     >
-      <div id="app" className="max-w-6xl mx-auto p-3 sm:p-5">
+      <div id="app" className="max-w-6xl mx-auto p-3 sm:p-5 print:max-w-none print:p-0 print:m-0">
         {/* Header Navigation */}
         <Header
           currentView={currentView}
@@ -70,7 +68,6 @@ export default function App() {
           lang={lang}
           onToggleLang={handleToggleLang}
           activeCount={activeCount}
-          onOpenDataModal={() => setIsDataModalOpen(true)}
         />
 
         {/* Dynamic Views */}
@@ -119,18 +116,6 @@ export default function App() {
           patient={selectedPatient}
           onClose={() => setSelectedPatient(null)}
           lang={lang}
-        />
-      )}
-
-      {/* Database & Backup Modal */}
-      {isDataModalOpen && (
-        <DataModal
-          isOpen={isDataModalOpen}
-          onClose={() => setIsDataModalOpen(false)}
-          lang={lang}
-          onDataChanged={() => {
-            updateActiveCount();
-          }}
         />
       )}
     </div>

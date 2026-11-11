@@ -4,21 +4,93 @@
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background-color: #f1f5f9;
+    color: #1e293b;
   }
 }
 
 .font-arabic {
-  font-family: 'Cairo', 'Inter', -apple-system, sans-serif;
+  font-family: 'Cairo', 'Segoe UI', Tahoma, -apple-system, sans-serif;
 }
 
+/* Print Enhancements */
 @media print {
-  [data-html2pdf-ignore] {
+  @page {
+    size: A4 landscape;
+    margin: 10mm 12mm;
+  }
+
+  /* Universal print resets */
+  body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Elements to strictly hide in print */
+  header,
+  nav,
+  .no-print,
+  [data-html2pdf-ignore],
+  button,
+  input,
+  select,
+  .mobile-nav,
+  .toolbar-actions {
     display: none !important;
   }
-  body {
-    background-color: white !important;
+
+  /* Prevent page cuts inside cards, rows, and signatures */
+  tr,
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
-  .break-before-page {
-    break-before: page;
+
+  .print-page-break {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  /* Report Table Crisp Print Styles */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  table th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border-bottom: 2px solid #94a3b8 !important;
+    font-size: 9pt !important;
+  }
+
+  table td {
+    border-bottom: 1px solid #e2e8f0 !important;
+    padding: 6px 8px !important;
+    font-size: 8.5pt !important;
+  }
+
+  /* Clean print borders */
+  .print-bordered {
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+
+  .print-shadow-none {
+    box-shadow: none !important;
+  }
+
+  /* Printable signature block */
+  .report-signature-block {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 20px !important;
+    margin-top: 30px !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

@@ -2,7 +2,7 @@
  * Data Storage and Analytics Service for Waheed ICU Manager
  */
 
-import { PatientRecord, MonthlyReportData, DashboardMonthData, DischargeStatus, PatientStatus } from '../types/icu';
+import { PatientRecord, MonthlyReportData, PeriodReportData, DashboardMonthData, DischargeStatus, PatientStatus } from '../types/icu';
 import * as XLSX from 'xlsx';
 import sheetData from './sheetData.json';
 
@@ -309,13 +309,116 @@ export function getMonthlyReport(monthStr: string): MonthlyReportData {
     return b.admissionDate.localeCompare(a.admissionDate);
   });
 
+  const mortalityRate = dischargesCount > 0 ? parseFloat(((breakdown.DIED / dischargesCount) * 100).toFixed(1)) : 0;
+  const alos = dischargesCount > 0 ? parseFloat((totalDaysCount / dischargesCount).toFixed(1)) : 0;
+  const activeCount = monthlyRecords.filter(r => r.status === 'Active').length;
+
   return {
     month: monthStr,
     admissions: admissionsCount,
     discharges: dischargesCount,
     totalDays: totalDaysCount,
     breakdown,
+    mortalityRate,
+    alos,
+    activeCount,
     records: monthlyRecords
+  };
+}
+
+/**
+ * Get Comprehensive Census Report for any custom date range (From Date -> To Date)
+ */
+export function getPeriodReport(startDate: string, endDate: string, customTitle?: string): PeriodReportData {
+  const records = getStoredRecords();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Normalize dates
+  const sDate = startDate || todayStr;
+  const eDate = endDate || todayStr;
+  const minDate = sDate <= eDate ? sDate : eDate;
+  const maxDate = sDate <= eDate ? eDate : sDate;
+
+  let admissionsCount = 0;
+  let dischargesCount = 0;
+  let totalDaysCount = 0;
+
+  const breakdown = {
+    DIS: 0,
+    TRANS: 0,
+    DAMA: 0,
+    DIED: 0
+  };
+
+  const periodRecords: (PatientRecord & { reportDays: number })[] = [];
+
+  records.forEach(r => {
+    const isDischarged = r.status === 'Discharged';
+    const effectiveDischarge = isDischarged && r.dischargeDate ? r.dischargeDate : '9999-99-99';
+
+    // In ICU during this window if admissionDate <= maxDate AND effectiveDischarge >= minDate
+    const wasInICU = r.admissionDate <= maxDate && effectiveDischarge >= minDate;
+
+    if (wasInICU) {
+      // 1. Admission in this window?
+      if (r.admissionDate >= minDate && r.admissionDate <= maxDate) {
+        admissionsCount++;
+      }
+
+      // 2. Discharge in this window?
+      if (isDischarged && r.dischargeDate && r.dischargeDate >= minDate && r.dischargeDate <= maxDate) {
+        dischargesCount++;
+        const st = (r.dischargeStatus || '').toUpperCase();
+        if (st === 'TRANS') breakdown.TRANS++;
+        else if (st === 'DAMA') breakdown.DAMA++;
+        else if (st === 'DIED') breakdown.DIED++;
+        else breakdown.DIS++;
+      }
+
+      // 3. Compute Patient Days spent inside this specific window
+      const stayStart = r.admissionDate > minDate ? r.admissionDate : minDate;
+      let stayEnd: string;
+      if (isDischarged && r.dischargeDate) {
+        stayEnd = r.dischargeDate < maxDate ? r.dischargeDate : maxDate;
+      } else {
+        const activeCeil = todayStr < maxDate ? todayStr : maxDate;
+        stayEnd = activeCeil >= stayStart ? activeCeil : stayStart;
+      }
+
+      let daysInWindow = calculateDaysBetween(stayStart, stayEnd);
+      if (daysInWindow < 1) daysInWindow = 1;
+      totalDaysCount += daysInWindow;
+
+      periodRecords.push({
+        ...r,
+        reportDays: daysInWindow
+      });
+    }
+  });
+
+  // Sort: active first, then newest admission date
+  periodRecords.sort((a, b) => {
+    if (a.status === 'Active' && b.status !== 'Active') return -1;
+    if (a.status !== 'Active' && b.status === 'Active') return 1;
+    return b.admissionDate.localeCompare(a.admissionDate);
+  });
+
+  const mortalityRate = dischargesCount > 0 ? parseFloat(((breakdown.DIED / dischargesCount) * 100).toFixed(1)) : 0;
+  const alos = dischargesCount > 0 ? parseFloat((totalDaysCount / dischargesCount).toFixed(1)) : 0;
+  const activeCount = periodRecords.filter(r => r.status === 'Active').length;
+
+  return {
+    title: customTitle || `${minDate} - ${maxDate}`,
+    startDate: minDate,
+    endDate: maxDate,
+    admissions: admissionsCount,
+    discharges: dischargesCount,
+    totalDays: totalDaysCount,
+    breakdown,
+    mortalityRate,
+    alos,
+    activeCount,
+    records: periodRecords
   };
 }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PatientRecord } from '../types/icu';
 import { findActivePatient, saveAdmission, saveDischarge, getStoredRecords } from '../services/storage';
 import { Search, CheckCircle2, AlertTriangle, ArrowRight, BedDouble, UserCheck, Clock, Calendar, LogIn, LogOut, Check } from 'lucide-react';
+import { formatDate, formatStayDuration, calculateActiveStayDays } from '../utils/dateFormatter';
 
 interface EntryViewProps {
   lang: 'en' | 'ar';
@@ -87,8 +88,8 @@ export const EntryView: React.FC<EntryViewProps> = ({
       setFeedback({
         type: 'warning',
         message: isAr
-          ? `⚠️ المريض منوم حالياً في العناية المركزة منذ تاريخ ${patient.admissionDate}`
-          : `⚠️ Patient is currently ACTIVE in ICU. Admitted: ${patient.admissionDate}`
+          ? `⚠️ المريض منوم حالياً في العناية المركزة منذ ${formatDate(patient.admissionDate, 'ar')} (${formatStayDuration(calculateActiveStayDays(patient.admissionDate), 'ar')})`
+          : `⚠️ Patient is currently ACTIVE in ICU since ${formatDate(patient.admissionDate, 'en')} (${formatStayDuration(calculateActiveStayDays(patient.admissionDate), 'en')})`
       });
     } else {
       // Patient is NOT ACTIVE -> prepare admission
@@ -126,8 +127,8 @@ export const EntryView: React.FC<EntryViewProps> = ({
     setFeedback({
       type: 'warning',
       message: isAr
-        ? `⚠️ تم اختيار المريض المنوم: ${patient.patientName} (دخول: ${patient.admissionDate})`
-        : `⚠️ Selected active patient: ${patient.patientName} (Admitted: ${patient.admissionDate})`
+        ? `⚠️ تم اختيار المريض المنوم: ${patient.patientName} (دخول: ${formatDate(patient.admissionDate, 'ar')} - إقامة: ${formatStayDuration(calculateActiveStayDays(patient.admissionDate), 'ar')})`
+        : `⚠️ Selected active patient: ${patient.patientName} (Admitted: ${formatDate(patient.admissionDate, 'en')} - Stay: ${formatStayDuration(calculateActiveStayDays(patient.admissionDate), 'en')})`
     });
   };
 
@@ -253,8 +254,8 @@ export const EntryView: React.FC<EntryViewProps> = ({
                     <span className="w-2 h-2 rounded-full bg-teal-400"></span>
                     {pat.patientName}
                   </div>
-                  <div className="text-[11px] opacity-80 font-mono">
-                    #{pat.medicalNo} • {pat.admissionDate}
+                  <div className="text-[11px] opacity-80">
+                    #{pat.medicalNo} • {formatDate(pat.admissionDate, lang)} ({formatStayDuration(calculateActiveStayDays(pat.admissionDate), lang)})
                   </div>
                 </div>
                 <LogOut className="w-4 h-4 opacity-70 ml-2" />

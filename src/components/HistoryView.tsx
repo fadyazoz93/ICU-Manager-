@@ -18,6 +18,13 @@ import {
   Stethoscope,
   FileSpreadsheet,
 } from 'lucide-react';
+import {
+  formatDate,
+  formatTime,
+  formatStayDuration,
+  getDischargeStatusLabel,
+  calculateActiveStayDays,
+} from '../utils/dateFormatter';
 
 interface HistoryViewProps {
   lang: 'en' | 'ar';
@@ -266,9 +273,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <span className="text-[11px] text-slate-400 block font-medium">
                         {isAr ? 'تاريخ الدخول:' : 'Admission:'}
                       </span>
-                      <span className="font-medium text-slate-800 font-mono">
-                        {r.admissionDate} <span className="text-[10px] text-slate-400">{r.admissionTime}</span>
-                      </span>
+                      <div className="font-semibold text-slate-900">
+                        {formatDate(r.admissionDate, lang)}
+                      </div>
+                      {r.admissionTime && (
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {formatTime(r.admissionTime, lang)}
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -285,7 +297,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         {isAr ? 'قرح الفراش:' : 'PU / Wounds:'}
                       </span>
                       <span className="font-medium text-slate-800 truncate block">
-                        {r.pu || 'None'}
+                        {r.pu && r.pu !== 'None' ? r.pu : '-'}
                       </span>
                     </div>
 
@@ -293,8 +305,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <span className="text-[11px] text-slate-400 block font-medium">
                         {isAr ? 'مدة الإقامة:' : 'Total Stay:'}
                       </span>
-                      <span className="font-bold text-teal-700 font-mono">
-                        {r.lengthOfStay ? `${r.lengthOfStay}d` : '-'}
+                      <span className="font-bold text-teal-700">
+                        {isDischarged
+                          ? formatStayDuration(r.lengthOfStay, lang)
+                          : `${formatStayDuration(calculateActiveStayDays(r.admissionDate), lang)} (${isAr ? 'نشط' : 'active'})`}
                       </span>
                     </div>
 
@@ -303,28 +317,30 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <div className="col-span-2 pt-2 border-t border-slate-100 flex items-center justify-between">
                         <div>
                           <span className="text-[11px] text-slate-400 block font-medium">
-                            {isAr ? 'تاريخ وحالة الخروج:' : 'Discharge:'}
+                            {isAr ? 'تاريخ الخروج:' : 'Discharge:'}
                           </span>
-                          <span className="font-mono text-slate-700">
-                            {r.dischargeDate}
+                          <span className="font-medium text-slate-800">
+                            {formatDate(r.dischargeDate, lang)}
                           </span>
+                          {r.dischargeTime && (
+                            <span className="text-[10px] text-slate-400 block font-mono">
+                              {formatTime(r.dischargeTime, lang)}
+                            </span>
+                          )}
                         </div>
                         <div className="text-right">
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-bold inline-block ${
-                              r.dischargeStatus === 'DIED'
-                                ? 'bg-red-100 text-red-700'
-                                : r.dischargeStatus === 'DAMA'
-                                ? 'bg-amber-100 text-amber-800'
-                                : r.dischargeStatus === 'Trans'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {r.dischargeStatus}
-                          </span>
+                          {(() => {
+                            const meta = getDischargeStatusLabel(r.dischargeStatus, lang);
+                            return (
+                              <span
+                                className={`px-2 py-0.5 rounded text-xs font-bold border inline-block ${meta.badgeClass}`}
+                              >
+                                {meta.code} - {meta.name}
+                              </span>
+                            );
+                          })()}
                           {r.dischargeStatus === 'Trans' && r.transferLocation && (
-                            <div className="text-[11px] text-blue-600 font-medium">
+                            <div className="text-[11px] text-blue-600 font-medium mt-0.5">
                               → {r.transferLocation}
                             </div>
                           )}
@@ -415,9 +431,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           {r.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-slate-600">
-                        <div className="font-medium text-slate-800">{r.admissionDate}</div>
-                        <div className="text-xs text-slate-400 font-mono">{r.admissionTime}</div>
+                      <td className="px-4 py-3 text-slate-700">
+                        <div className="font-semibold text-slate-900">{formatDate(r.admissionDate, lang)}</div>
+                        {r.admissionTime && (
+                          <div className="text-[10px] text-slate-400 font-mono">{formatTime(r.admissionTime, lang)}</div>
+                        )}
                       </td>
                       <td
                         className="px-4 py-3 text-slate-600 truncate max-w-[160px]"
@@ -429,39 +447,40 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         className="px-4 py-3 text-slate-600 truncate max-w-[110px]"
                         title={r.pu || '-'}
                       >
-                        {r.pu || '-'}
+                        {r.pu && r.pu !== 'None' ? r.pu : '-'}
                       </td>
-                      <td className="px-4 py-3 text-slate-600">
+                      <td className="px-4 py-3 text-slate-700">
                         {isDischarged ? (
-                          r.dischargeDate
+                          <>
+                            <div className="font-semibold text-slate-900">{formatDate(r.dischargeDate, lang)}</div>
+                            {r.dischargeTime && (
+                              <div className="text-[10px] text-slate-400 font-mono">{formatTime(r.dischargeTime, lang)}</div>
+                            )}
+                          </>
                         ) : (
-                          <span className="text-teal-600 font-medium text-xs bg-teal-50 px-2 py-0.5 rounded">
+                          <span className="text-teal-700 font-bold text-xs bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
                             {isAr ? 'منوم حالياً' : 'In ICU'}
                           </span>
                         )}
                       </td>
                       <td className="px-4 py-3">
                         {isDischarged ? (
-                          <div className="flex flex-col">
-                            <span
-                              className={`font-bold text-xs px-2 py-0.5 rounded w-fit ${
-                                r.dischargeStatus === 'DIED'
-                                  ? 'bg-red-100 text-red-700'
-                                  : r.dischargeStatus === 'DAMA'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : r.dischargeStatus === 'Trans'
-                                  ? 'bg-blue-100 text-blue-700'
-                                  : 'bg-slate-100 text-slate-700'
-                              }`}
-                            >
-                              {r.dischargeStatus}
-                            </span>
-                            {r.dischargeStatus === 'Trans' && r.transferLocation && (
-                              <span className="text-xs text-blue-600 mt-0.5 font-medium">
-                                → {r.transferLocation}
-                              </span>
-                            )}
-                          </div>
+                          (() => {
+                            const meta = getDischargeStatusLabel(r.dischargeStatus, lang);
+                            return (
+                              <div className="flex flex-col">
+                                <span className={`font-bold text-xs px-2 py-0.5 rounded w-fit border ${meta.badgeClass}`}>
+                                  {meta.code} - {meta.name}
+                                </span>
+                                {r.dischargeStatus === 'Trans' && r.transferLocation && (
+                                  <span className="text-xs text-blue-600 mt-0.5 font-medium">
+                                    → {r.transferLocation}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : (
                           '-'
                         )}
@@ -472,8 +491,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       >
                         {isDischarged ? r.dischargeReason || '-' : '-'}
                       </td>
-                      <td className="px-4 py-3 font-semibold text-slate-800 font-mono">
-                        {r.lengthOfStay ? `${r.lengthOfStay}d` : '-'}
+                      <td className="px-4 py-3 font-semibold text-slate-800 text-xs">
+                        {isDischarged ? (
+                          <span className="font-bold text-slate-900">{formatStayDuration(r.lengthOfStay, lang)}</span>
+                        ) : (
+                          <span className="text-teal-700 font-bold">
+                            {formatStayDuration(calculateActiveStayDays(r.admissionDate), lang)} ({isAr ? 'نشط' : 'active'})
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1.5">

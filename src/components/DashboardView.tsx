@@ -4,6 +4,7 @@ import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { getDashboardData } from '../services/storage';
 import { DashboardMonthData } from '../types/icu';
 import { BarChart3, TrendingUp, Download, Calendar, Users, Activity, HeartCrack, Bed } from 'lucide-react';
+import { formatYearMonth } from '../utils/dateFormatter';
 
 Chart.register(...registerables, ChartDataLabels);
 
@@ -51,7 +52,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
   };
 
   const renderCharts = (data: DashboardMonthData[]) => {
-    const labels = data.map(d => d.label);
+    const labels = data.map(d => formatYearMonth(d.month, lang));
 
     const commonDataLabels = {
       display: function (context: any) {

@@ -48,6 +48,29 @@ export interface MonthlyReportData {
     DIED: number;
   };
   records: MonthlyRecordItem[];
+  // Clinical KPIs
+  mortalityRate?: number;
+  alos?: number;
+  activeCount?: number;
+}
+
+export interface PeriodReportData {
+  title: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  admissions: number;
+  discharges: number;
+  totalDays: number;
+  breakdown: {
+    DIS: number;
+    TRANS: number;
+    DAMA: number;
+    DIED: number;
+  };
+  mortalityRate: number; // %
+  alos: number;          // Average Length of Stay
+  activeCount: number;
+  records: MonthlyRecordItem[];
 }
 
 export interface DashboardMonthData {
@@ -63,3 +86,4 @@ export interface DashboardMonthData {
     DIED: number;
   };
 }
+

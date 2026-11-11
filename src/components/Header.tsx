@@ -1,5 +1,4 @@
-import React from 'react';
-import { Activity, ShieldCheck, Database, Globe, FileSpreadsheet, PlusCircle } from 'lucide-react';
+import { Activity, ShieldCheck, Globe, PlusCircle, FileSpreadsheet } from 'lucide-react';
 
 interface HeaderProps {
   currentView: 'entry' | 'dashboard' | 'history' | 'reports';
@@ -7,7 +6,6 @@ interface HeaderProps {
   lang: 'en' | 'ar';
   onToggleLang: () => void;
   activeCount: number;
-  onOpenDataModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,7 +14,6 @@ export const Header: React.FC<HeaderProps> = ({
   lang,
   onToggleLang,
   activeCount,
-  onOpenDataModal,
 }) => {
   const isAr = lang === 'ar';
 
@@ -115,26 +112,8 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
         </div>
 
-        {/* Auxiliary tools: Google Sheets, Data manager & Language switch */}
+        {/* Auxiliary tools: Language switch */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          <button
-            onClick={onOpenDataModal}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-2 bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 hover:text-white rounded-lg sm:rounded-xl border border-emerald-600/50 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
-            title={isAr ? 'حفظ واستعادة من Google Sheets' : 'Save & Restore from Google Sheets'}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden xs:inline">{isAr ? 'Google Sheets' : 'Google Sheets'}</span>
-          </button>
-
-          <button
-            onClick={onOpenDataModal}
-            title={isAr ? 'إدارة واستعادة البيانات' : 'Manage Data / Backup'}
-            className="p-2 sm:p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg sm:rounded-xl border border-slate-700 transition"
-            aria-label="Database Settings"
-          >
-            <Database className="w-4 h-4" />
-          </button>
-
           <button
             onClick={onToggleLang}
             title={isAr ? 'Switch to English' : 'التحويل للغة العربية'}
