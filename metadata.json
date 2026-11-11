@@ -1,0 +1,6 @@
+{
+  "name": "Waheed ICU Manager | نظام إدارة العناية المركزة",
+  "description": "نظام متكامل لإدارة دخول وخروج مرضى العناية المركزة، متابعة أيام الإقامة، تقارير التعداد الشهري، ولوحة المؤشرات التحليلية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
