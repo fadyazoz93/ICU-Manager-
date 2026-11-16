@@ -3,7 +3,6 @@ import { PatientRecord } from '../types/icu';
 import { getStoredRecords, deleteRecord, syncFromGoogleSheetLive } from '../services/storage';
 import {
   Search,
-  Filter,
   RefreshCw,
   Trash2,
   ExternalLink,
@@ -11,12 +10,10 @@ import {
   FileText,
   LayoutGrid,
   Table as TableIcon,
-  Calendar,
-  Clock,
-  Bed,
-  MapPin,
   Stethoscope,
   FileSpreadsheet,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   formatDate,
@@ -28,7 +25,7 @@ import {
 
 interface HistoryViewProps {
   lang: 'en' | 'ar';
-  onDischargePatient: (medicalNo: string) => void;
+  onDischargePatient: (medicalNo: string, recordId?: string) => void;
   onViewPatientDetails: (patient: PatientRecord) => void;
 }
 
@@ -43,55 +40,65 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('All');
   const [isSyncing, setIsSyncing] = useState(false);
-  
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
   // Responsive mode: 'cards' on mobile screens by default, 'table' on desktop
   const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
     return typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'table';
   });
 
-  useEffect(() => {
-    loadRecords();
-  }, []);
-
   const loadRecords = () => {
     const list = getStoredRecords();
-    setRecords(list);
+    setRecords([...list]);
   };
+
+  useEffect(() => {
+    loadRecords();
+    const onChanged = () => loadRecords();
+    window.addEventListener('icu-records-changed', onChanged);
+    return () => window.removeEventListener('icu-records-changed', onChanged);
+  }, []);
 
   const handleSyncSheet = async () => {
     setIsSyncing(true);
+    setNotice(null);
     try {
       const res = await syncFromGoogleSheetLive();
       if (res.success) {
-        const list = getStoredRecords();
-        setRecords(list);
+        loadRecords();
+        setNotice({
+          type: 'success',
+          message: isAr
+            ? `تمت المزامنة وتحديث ${res.count} سجل بنجاح`
+            : `Synced ${res.count} records successfully`,
+        });
       } else {
-        alert(isAr ? `فشل التحديث: ${res.error}` : `Sync failed: ${res.error}`);
+        setNotice({
+          type: 'error',
+          message: isAr ? `${res.error}` : `Sync failed: ${res.error}`,
+        });
       }
     } finally {
       setIsSyncing(false);
     }
   };
 
-  const handleDelete = (id: string, name: string) => {
-    const confirmMsg = isAr
-      ? `هل أنت متأكد من حذف سجل المريض: ${name}؟ لا يمكن التراجع عن هذا الإجراء.`
-      : `Are you sure you want to delete the record for ${name}? This action cannot be undone.`;
-
-    if (window.confirm(confirmMsg)) {
-      deleteRecord(id);
-      loadRecords();
-    }
+  const handleConfirmDelete = (id: string) => {
+    deleteRecord(id);
+    setPendingDeleteId(null);
+    loadRecords();
   };
 
-  // Filter Logic matching original Apps Script logic
+  // Null-safe Filter Logic
   const filteredRecords = records.filter((r) => {
     const term = search.toLowerCase().trim();
+    const mno = String(r.medicalNo || '').toLowerCase();
+    const name = String(r.patientName || '').toLowerCase();
+    const diag = String(r.diagnosis || '').toLowerCase();
+
     const matchesSearch =
-      !term ||
-      r.medicalNo.toLowerCase().includes(term) ||
-      r.patientName.toLowerCase().includes(term) ||
-      (r.diagnosis && r.diagnosis.toLowerCase().includes(term));
+      !term || mno.includes(term) || name.includes(term) || diag.includes(term);
 
     let matchesFilter = true;
     if (filter === 'Active') {
@@ -99,7 +106,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     } else if (filter === 'Discharged') {
       matchesFilter = r.status === 'Discharged';
     } else if (['DIS', 'TRANS', 'DAMA', 'DIED'].includes(filter)) {
-      const status = r.dischargeStatus ? r.dischargeStatus.toUpperCase() : '';
+      const status = String(r.dischargeStatus || '').trim().toUpperCase();
       matchesFilter = status === filter;
     }
 
@@ -129,11 +136,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           {/* View Mode Toggle (Cards vs Table) */}
           <div className="flex items-center gap-1.5 self-end sm:self-auto bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button
+              type="button"
               onClick={() => setViewMode('cards')}
               title={isAr ? 'عرض بطاقات' : 'Card View'}
               className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
                 viewMode === 'cards'
-                  ? 'bg-white text-teal-700 shadow-xs'
+                  ? 'bg-white text-teal-700 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -141,11 +149,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               <span>{isAr ? 'بطاقات' : 'Cards'}</span>
             </button>
             <button
+              type="button"
               onClick={() => setViewMode('table')}
               title={isAr ? 'عرض جدول' : 'Table View'}
               className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
                 viewMode === 'table'
-                  ? 'bg-white text-teal-700 shadow-xs'
+                  ? 'bg-white text-teal-700 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -191,22 +200,51 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           {/* Sync & Refresh Buttons */}
           <div className="sm:col-span-1 flex items-center justify-end gap-1.5">
             <button
+              type="button"
               onClick={handleSyncSheet}
               disabled={isSyncing}
-              className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 rounded-xl transition flex items-center justify-center shadow-xs"
+              className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 rounded-xl transition flex items-center justify-center shadow-sm"
               title={isAr ? 'مزامنة حية من Google Sheet' : 'Live Sync from Google Sheet'}
             >
               <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-600' : ''}`} />
             </button>
             <button
+              type="button"
               onClick={loadRecords}
-              className="p-2 bg-slate-50 border border-slate-300 rounded-xl hover:bg-slate-100 text-slate-600 transition flex items-center justify-center shadow-xs"
+              className="p-2 bg-slate-50 border border-slate-300 rounded-xl hover:bg-slate-100 text-slate-600 transition flex items-center justify-center shadow-sm"
               title={isAr ? 'إعادة تحميل محلي' : 'Reload'}
             >
               <FileSpreadsheet className="w-4 h-4" />
             </button>
           </div>
         </div>
+
+        {/* Inline Sync Notification */}
+        {notice && (
+          <div
+            className={`p-3 rounded-xl text-xs font-medium flex items-center justify-between gap-2 border ${
+              notice.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-amber-50 text-amber-800 border-amber-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {notice.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              )}
+              <span>{notice.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              className="text-xs font-bold opacity-70 hover:opacity-100 px-1.5"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Main Content Area */}
@@ -225,6 +263,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {filteredRecords.map((r) => {
             const isDischarged = r.status === 'Discharged';
+            const isTrans = String(r.dischargeStatus || '').toUpperCase() === 'TRANS';
             return (
               <div
                 key={r.id}
@@ -237,7 +276,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <h3 className="font-bold text-slate-900 text-base leading-snug">
                         {r.patientName}
                       </h3>
-                      <div className="text-xs font-mono text-slate-500 font-semibold mt-0.5">
+                      <div dir="ltr" className="text-xs font-mono text-slate-500 font-semibold mt-0.5 w-fit">
                         #{r.medicalNo}
                       </div>
                     </div>
@@ -260,11 +299,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
                   {/* Diagnosis */}
                   <div className="mt-3 p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-xs text-slate-700">
-                    <span className="font-bold text-slate-500 block mb-0.5 flex items-center gap-1">
+                    <span className="font-bold text-slate-500 mb-0.5 flex items-center gap-1">
                       <Stethoscope className="w-3.5 h-3.5 text-teal-600" />
                       {isAr ? 'التشخيص الطبي:' : 'Diagnosis:'}
                     </span>
-                    <p className="line-clamp-2 leading-relaxed">{r.diagnosis}</p>
+                    <p className="line-clamp-2 leading-relaxed">{r.diagnosis || '-'}</p>
                   </div>
 
                   {/* Details Grid */}
@@ -277,7 +316,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         {formatDate(r.admissionDate, lang)}
                       </div>
                       {r.admissionTime && (
-                        <div className="text-[10px] text-slate-400 font-mono">
+                        <div className="text-[10px] text-slate-400">
                           {formatTime(r.admissionTime, lang)}
                         </div>
                       )}
@@ -314,7 +353,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
                     {/* Discharge status info if discharged */}
                     {isDischarged && (
-                      <div className="col-span-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <div className="col-span-2 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                         <div>
                           <span className="text-[11px] text-slate-400 block font-medium">
                             {isAr ? 'تاريخ الخروج:' : 'Discharge:'}
@@ -323,12 +362,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                             {formatDate(r.dischargeDate, lang)}
                           </span>
                           {r.dischargeTime && (
-                            <span className="text-[10px] text-slate-400 block font-mono">
+                            <span className="text-[10px] text-slate-400 block">
                               {formatTime(r.dischargeTime, lang)}
                             </span>
                           )}
                         </div>
-                        <div className="text-right">
+                        <div className="text-end">
                           {(() => {
                             const meta = getDischargeStatusLabel(r.dischargeStatus, lang);
                             return (
@@ -339,7 +378,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                               </span>
                             );
                           })()}
-                          {r.dischargeStatus === 'Trans' && r.transferLocation && (
+                          {isTrans && r.transferLocation && (
                             <div className="text-[11px] text-blue-600 font-medium mt-0.5">
                               → {r.transferLocation}
                             </div>
@@ -352,31 +391,60 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
                 {/* Card Actions Footer */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => onViewPatientDetails(r)}
-                      className="p-2 text-slate-500 hover:text-teal-700 hover:bg-teal-50 rounded-xl transition flex items-center gap-1 text-xs font-semibold"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>{isAr ? 'الملف' : 'Details'}</span>
-                    </button>
-                    <button
-                      onClick={() => handleDelete(r.id, r.patientName)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition"
-                      title={isAr ? 'حذف السجل' : 'Delete'}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {pendingDeleteId === r.id ? (
+                    <div className="flex items-center justify-between w-full gap-2 bg-red-50 px-2.5 py-1.5 rounded-xl border border-red-200 text-xs">
+                      <span className="text-red-800 font-semibold truncate">
+                        {isAr ? 'تأكيد الحذف؟' : 'Confirm delete?'}
+                      </span>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmDelete(r.id)}
+                          className="px-2 py-1 bg-red-600 text-white rounded-lg font-bold"
+                        >
+                          {isAr ? 'حذف' : 'Yes'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteId(null)}
+                          className="px-2 py-1 bg-white text-slate-700 border border-slate-300 rounded-lg font-medium"
+                        >
+                          {isAr ? 'إلغاء' : 'No'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onViewPatientDetails(r)}
+                          className="p-2 text-slate-500 hover:text-teal-700 hover:bg-teal-50 rounded-xl transition flex items-center gap-1 text-xs font-semibold"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>{isAr ? 'الملف' : 'Details'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteId(r.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition"
+                          title={isAr ? 'حذف السجل' : 'Delete'}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
 
-                  {r.status === 'Active' && (
-                    <button
-                      onClick={() => onDischargePatient(r.medicalNo)}
-                      className="px-3.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      <span>{isAr ? 'تسجيل خروج' : 'Discharge'}</span>
-                    </button>
+                      {r.status === 'Active' && (
+                        <button
+                          type="button"
+                          onClick={() => onDischargePatient(r.medicalNo, r.id)}
+                          className="px-3.5 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                        >
+                          <LogOut className="w-3.5 h-3.5" />
+                          <span>{isAr ? 'تسجيل خروج' : 'Discharge'}</span>
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -387,7 +455,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         /* TABLE VIEW: Classic Full Spreadsheet View with Horizontal Scrolling */
         <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left whitespace-nowrap">
+            <table className="w-full text-sm text-left rtl:text-right whitespace-nowrap">
               <thead className="text-xs text-slate-500 uppercase bg-slate-100/90 border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3.5 font-bold">{isAr ? 'الرقم الطبي' : 'Medical No'}</th>
@@ -407,10 +475,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               <tbody id="history-body" className="divide-y divide-slate-100">
                 {filteredRecords.map((r) => {
                   const isDischarged = r.status === 'Discharged';
+                  const isTrans = String(r.dischargeStatus || '').toUpperCase() === 'TRANS';
                   return (
                     <tr key={r.id} className="hover:bg-slate-50/80 transition">
                       <td className="px-4 py-3 font-mono font-semibold text-slate-700">
-                        {r.medicalNo}
+                        <span dir="ltr" className="inline-block">{r.medicalNo}</span>
                       </td>
                       <td className="px-4 py-3 font-medium text-slate-900">
                         {r.patientName}
@@ -434,14 +503,14 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <td className="px-4 py-3 text-slate-700">
                         <div className="font-semibold text-slate-900">{formatDate(r.admissionDate, lang)}</div>
                         {r.admissionTime && (
-                          <div className="text-[10px] text-slate-400 font-mono">{formatTime(r.admissionTime, lang)}</div>
+                          <div className="text-[10px] text-slate-400">{formatTime(r.admissionTime, lang)}</div>
                         )}
                       </td>
                       <td
                         className="px-4 py-3 text-slate-600 truncate max-w-[160px]"
                         title={r.diagnosis}
                       >
-                        {r.diagnosis}
+                        {r.diagnosis || '-'}
                       </td>
                       <td
                         className="px-4 py-3 text-slate-600 truncate max-w-[110px]"
@@ -454,7 +523,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           <>
                             <div className="font-semibold text-slate-900">{formatDate(r.dischargeDate, lang)}</div>
                             {r.dischargeTime && (
-                              <div className="text-[10px] text-slate-400 font-mono">{formatTime(r.dischargeTime, lang)}</div>
+                              <div className="text-[10px] text-slate-400">{formatTime(r.dischargeTime, lang)}</div>
                             )}
                           </>
                         ) : (
@@ -473,7 +542,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                                 <span className={`font-bold text-xs px-2 py-0.5 rounded w-fit border ${meta.badgeClass}`}>
                                   {meta.code} - {meta.name}
                                 </span>
-                                {r.dischargeStatus === 'Trans' && r.transferLocation && (
+                                {isTrans && r.transferLocation && (
                                   <span className="text-xs text-blue-600 mt-0.5 font-medium">
                                     → {r.transferLocation}
                                   </span>
@@ -501,34 +570,56 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         )}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {r.status === 'Active' && (
+                        {pendingDeleteId === r.id ? (
+                          <div className="flex items-center justify-center gap-1 text-xs">
                             <button
-                              onClick={() => onDischargePatient(r.medicalNo)}
-                              className="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-xs transition"
-                              title={isAr ? 'تسجيل الخروج' : 'Discharge Patient'}
+                              type="button"
+                              onClick={() => handleConfirmDelete(r.id)}
+                              className="px-2 py-1 bg-red-600 text-white rounded font-bold"
                             >
-                              <LogOut className="w-3 h-3" />
-                              <span>{isAr ? 'خروج' : 'Discharge'}</span>
+                              {isAr ? 'تأكيد' : 'Yes'}
                             </button>
-                          )}
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteId(null)}
+                              className="px-2 py-1 bg-slate-200 text-slate-700 rounded font-medium"
+                            >
+                              {isAr ? 'إلغاء' : 'No'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1.5">
+                            {r.status === 'Active' && (
+                              <button
+                                type="button"
+                                onClick={() => onDischargePatient(r.medicalNo, r.id)}
+                                className="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 shadow-sm transition"
+                                title={isAr ? 'تسجيل الخروج' : 'Discharge Patient'}
+                              >
+                                <LogOut className="w-3 h-3" />
+                                <span>{isAr ? 'خروج' : 'Discharge'}</span>
+                              </button>
+                            )}
 
-                          <button
-                            onClick={() => onViewPatientDetails(r)}
-                            className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition"
-                            title={isAr ? 'عرض تفاصيل الملف' : 'View Details'}
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => onViewPatientDetails(r)}
+                              className="p-1.5 text-slate-500 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition"
+                              title={isAr ? 'عرض تفاصيل الملف' : 'View Details'}
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </button>
 
-                          <button
-                            onClick={() => handleDelete(r.id, r.patientName)}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                            title={isAr ? 'حذف السجل' : 'Delete Record'}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteId(r.id)}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                              title={isAr ? 'حذف السجل' : 'Delete Record'}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

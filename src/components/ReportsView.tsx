@@ -1,36 +1,29 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { MonthlyReportData, MonthlyRecordItem } from '../types/icu';
-import { getMonthlyReport, getPeriodReport } from '../services/storage';
+import { MonthlyReportData } from '../types/icu';
+import { getMonthlyReport, getPeriodReport, getLatestRecordMonth } from '../services/storage';
 import {
   formatDate,
   formatTime,
   formatYearMonth,
   formatStayDuration,
   getDischargeStatusLabel,
-  ARABIC_MONTHS,
+  getLocalTodayDate,
+  getLocalCurrentTime,
+  getLocalCurrentMonth,
+  getLocalMonthStartDate,
 } from '../utils/dateFormatter';
 import {
   FileSpreadsheet,
-  Download,
   Calendar,
   Users,
   Activity,
-  Bed,
-  CheckCircle2,
-  AlertCircle,
   LayoutGrid,
   Table as TableIcon,
   Printer,
   Search,
-  Filter,
-  ArrowUpDown,
-  Building2,
-  ShieldCheck,
   TrendingUp,
-  Percent,
   Clock,
-  FileCheck,
 } from 'lucide-react';
 
 interface ReportsViewProps {
@@ -45,25 +38,20 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
   // Mode: single month or custom range
   const [periodType, setPeriodType] = useState<PeriodType>('month');
 
-  // Month selector (default current month)
-  const [month, setMonth] = useState(() => {
-    return new Date().toISOString().slice(0, 7);
-  });
+  // Month selector (local month)
+  const [month, setMonth] = useState(() => getLocalCurrentMonth());
 
-  // Custom date range selectors
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [endDate, setEndDate] = useState(() => {
-    return new Date().toISOString().slice(0, 10);
-  });
+  // Custom date range selectors (local dates)
+  const [startDate, setStartDate] = useState(() => getLocalMonthStartDate());
+  const [endDate, setEndDate] = useState(() => getLocalTodayDate());
 
   // Report state
   const [reportData, setReportData] = useState<MonthlyReportData | null>(null);
   const [reportTitle, setReportTitle] = useState<string>('');
-  const [generatedAt, setGeneratedAt] = useState<string>('');
+  const [generatedAt, setGeneratedAt] = useState<{ date: string; time: string }>(() => ({
+    date: getLocalTodayDate(),
+    time: getLocalCurrentTime(),
+  }));
 
   // Table vs Cards
   const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
@@ -75,25 +63,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Active' | 'DIS' | 'TRANS' | 'DAMA' | 'DIED'>('ALL');
   const [sortBy, setSortBy] = useState<'days' | 'admission' | 'name'>('days');
 
-  // Initial load
-  useEffect(() => {
-    handleGenerateMonthlyReport(month);
-  }, []);
+  const stampNow = () => ({
+    date: getLocalTodayDate(),
+    time: getLocalCurrentTime(),
+  });
 
   const handleGenerateMonthlyReport = (selectedMonth: string) => {
     if (!selectedMonth) return;
     const data = getMonthlyReport(selectedMonth);
     setReportData(data);
     setReportTitle(formatYearMonth(selectedMonth, lang));
-    setGeneratedAt(new Date().toISOString());
+    setGeneratedAt(stampNow());
   };
 
-  const handleGenerateCustomReport = () => {
-    if (!startDate || !endDate) return;
-    const data = getPeriodReport(startDate, endDate);
-    // Adapt to MonthlyReportData structure
+  const handleGenerateCustomReport = (s = startDate, e = endDate) => {
+    if (!s || !e) return;
+    const data = getPeriodReport(s, e);
     setReportData({
-      month: `${startDate} → ${endDate}`,
+      month: `${data.startDate} → ${data.endDate}`,
       admissions: data.admissions,
       discharges: data.discharges,
       totalDays: data.totalDays,
@@ -105,35 +92,69 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
     });
     setReportTitle(
       isAr
-        ? `الفترة من ${formatDate(startDate, 'ar')} إلى ${formatDate(endDate, 'ar')}`
-        : `Period from ${formatDate(startDate, 'en')} to ${formatDate(endDate, 'en')}`
+        ? `من ${formatDate(data.startDate, 'ar')} إلى ${formatDate(data.endDate, 'ar')}`
+        : `${formatDate(data.startDate, 'en')} – ${formatDate(data.endDate, 'en')}`
     );
-    setGeneratedAt(new Date().toISOString());
+    setGeneratedAt(stampNow());
   };
 
-  // Quick preset shortcuts
-  const applyPreset = (preset: 'thisMonth' | 'lastMonth' | 'last30' | 'thisYear') => {
+  // Initial load: if device's current month has 0 records (e.g., clock drift/future/past), fall back to latest active data month
+  useEffect(() => {
+    const initialMonth = getLocalCurrentMonth();
+    const initialData = getMonthlyReport(initialMonth);
+    if (initialData.records.length === 0) {
+      const latestMonth = getLatestRecordMonth();
+      setMonth(latestMonth);
+      handleGenerateMonthlyReport(latestMonth);
+    } else {
+      setReportData(initialData);
+      setReportTitle(formatYearMonth(initialMonth, lang));
+      setGeneratedAt(stampNow());
+    }
+  }, []);
+
+  // Re-localize title when language toggles & refresh when records update
+  useEffect(() => {
+    if (periodType === 'month') {
+      handleGenerateMonthlyReport(month);
+    } else {
+      handleGenerateCustomReport(startDate, endDate);
+    }
+    const onChanged = () => {
+      if (periodType === 'month') handleGenerateMonthlyReport(month);
+      else handleGenerateCustomReport(startDate, endDate);
+    };
+    window.addEventListener('icu-records-changed', onChanged);
+    return () => window.removeEventListener('icu-records-changed', onChanged);
+  }, [lang]);
+
+  // Quick preset shortcuts (all local calendar dates)
+  const applyPreset = (preset: 'thisMonth' | 'lastMonth' | 'last30' | 'thisYear' | 'latestMonth') => {
     const today = new Date();
     if (preset === 'thisMonth') {
-      const m = today.toISOString().slice(0, 7);
+      const m = getLocalCurrentMonth(today);
+      setMonth(m);
+      setPeriodType('month');
+      handleGenerateMonthlyReport(m);
+    } else if (preset === 'latestMonth') {
+      const m = getLatestRecordMonth();
       setMonth(m);
       setPeriodType('month');
       handleGenerateMonthlyReport(m);
     } else if (preset === 'lastMonth') {
       const lastMonthDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const m = lastMonthDate.toISOString().slice(0, 7);
+      const m = getLocalCurrentMonth(lastMonthDate);
       setMonth(m);
       setPeriodType('month');
       handleGenerateMonthlyReport(m);
     } else if (preset === 'last30') {
-      const start = new Date();
-      start.setDate(today.getDate() - 30);
-      const sStr = start.toISOString().slice(0, 10);
-      const eStr = today.toISOString().slice(0, 10);
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30);
+      const sStr = getLocalTodayDate(start);
+      const eStr = getLocalTodayDate(today);
       setStartDate(sStr);
       setEndDate(eStr);
       setPeriodType('custom');
-      const data = getPeriodReport(sStr, eStr, isAr ? 'آخر 30 يوماً' : 'Last 30 Days');
+      const data = getPeriodReport(sStr, eStr);
       setReportData({
         month: `${sStr} → ${eStr}`,
         admissions: data.admissions,
@@ -146,14 +167,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
         records: data.records,
       });
       setReportTitle(isAr ? 'تقرير آخر 30 يوماً' : 'Last 30 Days Report');
-      setGeneratedAt(new Date().toISOString());
+      setGeneratedAt(stampNow());
     } else if (preset === 'thisYear') {
       const sStr = `${today.getFullYear()}-01-01`;
-      const eStr = today.toISOString().slice(0, 10);
+      const eStr = getLocalTodayDate(today);
       setStartDate(sStr);
       setEndDate(eStr);
       setPeriodType('custom');
-      const data = getPeriodReport(sStr, eStr, isAr ? `عام ${today.getFullYear()}` : `Year ${today.getFullYear()}`);
+      const data = getPeriodReport(sStr, eStr);
       setReportData({
         month: `${sStr} → ${eStr}`,
         admissions: data.admissions,
@@ -166,11 +187,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
         records: data.records,
       });
       setReportTitle(isAr ? `تقرير عام ${today.getFullYear()}` : `Year ${today.getFullYear()} Report`);
-      setGeneratedAt(new Date().toISOString());
+      setGeneratedAt(stampNow());
     }
   };
 
-  // Filtered and sorted records
+  // Filtered and sorted records (null-safe)
   const filteredRecords = useMemo(() => {
     if (!reportData) return [];
     let list = [...reportData.records];
@@ -179,9 +200,9 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
       const q = tableSearch.toLowerCase().trim();
       list = list.filter(
         (r) =>
-          r.patientName.toLowerCase().includes(q) ||
-          r.medicalNo.toLowerCase().includes(q) ||
-          r.diagnosis.toLowerCase().includes(q)
+          String(r.patientName || '').toLowerCase().includes(q) ||
+          String(r.medicalNo || '').toLowerCase().includes(q) ||
+          String(r.diagnosis || '').toLowerCase().includes(q)
       );
     }
 
@@ -189,18 +210,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
       if (statusFilter === 'Active') {
         list = list.filter((r) => r.status === 'Active');
       } else {
-        list = list.filter((r) => (r.dischargeStatus || '').toUpperCase() === statusFilter);
+        list = list.filter((r) => String(r.dischargeStatus || '').trim().toUpperCase() === statusFilter);
       }
     }
 
-    // Sort
     list.sort((a, b) => {
       if (sortBy === 'days') {
         return b.reportDays - a.reportDays;
       } else if (sortBy === 'admission') {
-        return b.admissionDate.localeCompare(a.admissionDate);
+        return String(b.admissionDate || '').localeCompare(String(a.admissionDate || ''));
       } else {
-        return a.patientName.localeCompare(b.patientName);
+        return String(a.patientName || '').localeCompare(String(b.patientName || ''));
       }
     });
 
@@ -220,7 +240,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
     const ws_data: any[][] = [
       [`مستشفى العناية المركزة - تقرير النشاط والتعداد السريري (${reportTitle})`],
       [`Waheed ICU Manager - Clinical Activity & Census Report`],
-      [`تاريخ وتوقيت الإصدار / Generated: ${formatDate(generatedAt, lang, { withWeekday: true })} - ${formatTime(generatedAt.slice(11, 16), lang)}`],
+      [`تاريخ وتوقيت الإصدار / Generated: ${formatDate(generatedAt.date, lang, { withWeekday: true })} - ${formatTime(generatedAt.time, lang)}`],
       [],
       ['المؤشرات الإحصائية والسريرية الرئيسية (CLINICAL & STATISTICAL INDICATORS)'],
       ['حالات الدخول الجديدة (Total Admissions)', data.admissions],
@@ -298,6 +318,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
       (reportData.discharges > 0 ? parseFloat((reportData.totalDays / reportData.discharges).toFixed(1)) : 0)
     : 0;
 
+  const currentYear = new Date().getFullYear();
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Selection & Action Toolbar (Screen only - Hidden in print) */}
@@ -306,10 +328,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
             <button
+              type="button"
               onClick={() => setPeriodType('month')}
               className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition flex items-center gap-1.5 ${
                 periodType === 'month'
-                  ? 'bg-white text-teal-800 shadow-xs'
+                  ? 'bg-white text-teal-800 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -317,10 +340,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
               <span>{isAr ? 'تقرير شهري' : 'Monthly Report'}</span>
             </button>
             <button
+              type="button"
               onClick={() => setPeriodType('custom')}
               className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition flex items-center gap-1.5 ${
                 periodType === 'custom'
-                  ? 'bg-white text-teal-800 shadow-xs'
+                  ? 'bg-white text-teal-800 shadow-sm'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -335,28 +359,39 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
               {isAr ? 'اختصارات سريعة:' : 'Quick Presets:'}
             </span>
             <button
+              type="button"
               onClick={() => applyPreset('thisMonth')}
               className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition"
             >
               {isAr ? 'الشهر الحالي' : 'This Month'}
             </button>
             <button
+              type="button"
               onClick={() => applyPreset('lastMonth')}
               className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition"
             >
               {isAr ? 'الشهر السابق' : 'Last Month'}
             </button>
             <button
+              type="button"
               onClick={() => applyPreset('last30')}
               className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition"
             >
               {isAr ? 'آخر 30 يوماً' : 'Last 30 Days'}
             </button>
             <button
+              type="button"
               onClick={() => applyPreset('thisYear')}
               className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition"
             >
               {isAr ? 'العام الحالي' : 'This Year'}
+            </button>
+            <button
+              type="button"
+              onClick={() => applyPreset('latestMonth')}
+              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-semibold transition"
+            >
+              {isAr ? 'أحدث شهر مسجل' : 'Latest Data'}
             </button>
           </div>
         </div>
@@ -366,17 +401,18 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
           {periodType === 'month' ? (
             <div className="flex-1">
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                <Calendar className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
+                <Calendar className="w-3.5 h-3.5 inline mx-1 text-slate-400" />
                 {isAr ? 'اختر شهر التقرير' : 'Select Month'}
               </label>
               <input
                 type="month"
+                dir="ltr"
                 value={month}
                 onChange={(e) => {
                   setMonth(e.target.value);
                   handleGenerateMonthlyReport(e.target.value);
                 }}
-                className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm"
+                className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm font-mono"
               />
             </div>
           ) : (
@@ -387,9 +423,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </label>
                 <input
                   type="date"
+                  dir="ltr"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm font-mono"
                 />
               </div>
               <div>
@@ -398,9 +435,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </label>
                 <input
                   type="date"
+                  dir="ltr"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-teal-500 bg-white font-medium text-slate-800 text-sm font-mono"
                 />
               </div>
             </div>
@@ -409,6 +447,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
           {/* Action buttons */}
           <div className="flex flex-wrap sm:flex-nowrap gap-2">
             <button
+              type="button"
               onClick={() => {
                 if (periodType === 'month') handleGenerateMonthlyReport(month);
                 else handleGenerateCustomReport();
@@ -422,6 +461,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
             {reportData && (
               <>
                 <button
+                  type="button"
                   onClick={handlePrint}
                   id="btn-print"
                   className="flex-1 sm:flex-none bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl font-semibold shadow-md shadow-slate-900/20 transition flex items-center justify-center gap-2 text-sm"
@@ -432,6 +472,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleDownloadExcel}
                   id="btn-excel"
                   className="flex-1 sm:flex-none bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl font-semibold shadow-md shadow-emerald-700/20 transition flex items-center justify-center gap-2 text-sm"
@@ -452,12 +493,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
           id="report-printable-area"
           className="p-4 sm:p-7 bg-white rounded-2xl shadow-sm border border-slate-200 space-y-6 print:border-none print:shadow-none print:p-0"
         >
-          {/* ======================================================== */}
-          {/* OFFICIAL HOSPITAL PRINT HEADER (Visible on Screen & Print) */}
-          {/* ======================================================== */}
+          {/* OFFICIAL HOSPITAL PRINT HEADER */}
           <div className="border-b-2 border-slate-800 pb-5">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              {/* Left/Right Hospital Emblem & Title */}
+              {/* Hospital Emblem & Title */}
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-teal-700 text-white flex items-center justify-center shadow-md flex-shrink-0 print:border print:border-slate-800">
                   <Activity className="w-7 h-7" />
@@ -476,28 +515,26 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
               </div>
 
               {/* Meta Box: Reference, Period & Date */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1 w-full sm:w-auto text-left sm:text-right print:bg-white print:border print:border-slate-300">
-                <div className="flex justify-between sm:justify-end gap-3">
-                  <span className="text-slate-400 font-semibold">{isAr ? 'فترة التقرير:' : 'Report Period:'}</span>
-                  <span className="font-bold text-slate-900 font-mono">{reportTitle}</span>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1.5 w-full sm:w-auto text-start print:bg-white print:border print:border-slate-300">
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500 font-semibold">{isAr ? 'فترة التقرير:' : 'Report Period:'}</span>
+                  <span className="font-bold text-slate-900">{reportTitle}</span>
                 </div>
-                <div className="flex justify-between sm:justify-end gap-3">
-                  <span className="text-slate-400 font-semibold">{isAr ? 'تاريخ التقرير:' : 'Generated At:'}</span>
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500 font-semibold">{isAr ? 'تاريخ التقرير:' : 'Generated At:'}</span>
                   <span className="font-medium text-slate-800">
-                    {formatDate(generatedAt, lang, { withWeekday: true })} • {formatTime(generatedAt.slice(11, 16), lang)}
+                    {formatDate(generatedAt.date, lang, { withWeekday: true })} • {formatTime(generatedAt.time, lang)}
                   </span>
                 </div>
-                <div className="flex justify-between sm:justify-end gap-3">
-                  <span className="text-slate-400 font-semibold">{isAr ? 'الحالات في التعداد:' : 'Patients in Census:'}</span>
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500 font-semibold">{isAr ? 'الحالات في التعداد:' : 'Patients in Census:'}</span>
                   <span className="font-bold text-teal-700">{reportData.records.length} {isAr ? 'مريض' : 'patients'}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* ======================================================== */}
-          {/* STATS & CLINICAL QUALITY INDICATORS                      */}
-          {/* ======================================================== */}
+          {/* STATS & CLINICAL QUALITY INDICATORS */}
           <div>
             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-teal-600" />
@@ -558,11 +595,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
               </div>
 
               {/* Mortality Rate */}
-              <div className={`p-3.5 rounded-xl text-center border print:border print:border-slate-300 print:bg-white ${
-                calculatedMortality > 15
-                  ? 'bg-red-50 border-red-200 text-red-800'
-                  : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-              }`}>
+              <div
+                className={`p-3.5 rounded-xl text-center border print:border print:border-slate-300 print:bg-white ${
+                  calculatedMortality > 15
+                    ? 'bg-red-50 border-red-200 text-red-800'
+                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}
+              >
                 <div className="text-[11px] font-bold uppercase tracking-wider">
                   {isAr ? 'معدل الوفيات' : 'Mortality Rate'}
                 </div>
@@ -601,10 +640,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
             </div>
           </div>
 
-          {/* ======================================================== */}
-          {/* CENSUS LOG TABLE / CARDS                                 */}
-          {/* ======================================================== */}
-          <div className="rounded-2xl overflow-hidden border border-slate-200 print:border-none">
+          {/* CENSUS LOG TABLE / CARDS */}
+          <div className="rounded-2xl overflow-hidden border border-slate-200 print:border-none print:overflow-visible">
             {/* Header / Table Toolbar (Screen only controls) */}
             <div className="p-3.5 sm:p-4 bg-slate-50 border-b border-slate-200 flex flex-col lg:flex-row gap-3 justify-between items-start lg:items-center no-print">
               <div>
@@ -612,7 +649,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                   <Users className="w-4 h-4 text-teal-600" />
                   <span>{isAr ? 'بيانات التعداد السريري المفصل' : 'Detailed Patient Census'}</span>
                 </span>
-                <span className="text-xs text-slate-500 block sm:inline-block sm:ml-2">
+                <span className="text-xs text-slate-500 block sm:inline-block sm:mx-2">
                   {isAr ? 'أيام الإقامة الفعلية داخل هذه الفترة المحددة' : 'Calculated days in ICU during this time window'}
                 </span>
               </div>
@@ -659,6 +696,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 {/* Cards vs Table Switcher */}
                 <div className="flex items-center gap-0.5 bg-white p-0.5 rounded-lg border border-slate-200">
                   <button
+                    type="button"
                     onClick={() => setViewMode('cards')}
                     className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${
                       viewMode === 'cards' ? 'bg-teal-50 text-teal-800 font-bold' : 'text-slate-600'
@@ -668,6 +706,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                     <span>{isAr ? 'بطاقات' : 'Cards'}</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => setViewMode('table')}
                     className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${
                       viewMode === 'table' ? 'bg-teal-50 text-teal-800 font-bold' : 'text-slate-600'
@@ -688,8 +727,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
             </div>
 
             {filteredRecords.length === 0 ? (
-              <div className="p-8 text-center text-slate-400">
-                {isAr ? 'لا توجد سجلات تطابق البحث أو الفلاتر المحددة.' : 'No patient records found matching your filters.'}
+              <div className="p-8 text-center text-slate-500 space-y-2">
+                <p>{isAr ? 'لا توجد سجلات تطابق الفترة أو الفلاتر المحددة.' : 'No patient records found matching your filters.'}</p>
+                {reportData.records.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => applyPreset('latestMonth')}
+                    className="px-3.5 py-1.5 rounded-lg bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition"
+                  >
+                    {isAr ? 'عرض أحدث شهر يحتوي على بيانات' : 'Jump to Latest Month with Data'}
+                  </button>
+                )}
               </div>
             ) : (
               <>
@@ -698,20 +746,21 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                   <div className="p-3 sm:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50/50 print:hidden">
                     {filteredRecords.map((r) => {
                       const isDischarged = r.status === 'Discharged';
+                      const isTrans = String(r.dischargeStatus || '').toUpperCase() === 'TRANS';
                       const statusMeta = getDischargeStatusLabel(r.dischargeStatus, lang);
                       return (
                         <div
                           key={r.id}
-                          className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2 text-xs"
+                          className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm space-y-2 text-xs"
                         >
-                          <div className="flex justify-between items-start">
+                          <div className="flex justify-between items-start gap-2">
                             <div>
                               <div className="font-bold text-slate-900 text-sm">{r.patientName}</div>
-                              <div className="text-slate-500 font-mono text-[11px]">#{r.medicalNo}</div>
+                              <div dir="ltr" className="text-slate-500 font-mono text-[11px] w-fit">#{r.medicalNo}</div>
                             </div>
-                            <div className="text-right">
+                            <div className="text-end">
                               <span className="text-[10px] text-slate-400 uppercase block">{isAr ? 'أيام الفترة' : 'Days'}</span>
-                              <span className="text-lg font-extrabold text-teal-700 font-mono">
+                              <span className="text-base font-extrabold text-teal-700">
                                 {formatStayDuration(r.reportDays, lang)}
                               </span>
                             </div>
@@ -721,7 +770,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                             <span className="font-semibold text-slate-400 text-[10px] block uppercase">
                               {isAr ? 'التشخيص الطبي:' : 'Diagnosis:'}
                             </span>
-                            <p className="line-clamp-2">{r.diagnosis}</p>
+                            <p className="line-clamp-2">{r.diagnosis || '-'}</p>
                           </div>
 
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-1 border-t border-slate-100">
@@ -731,7 +780,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                                 {formatDate(r.admissionDate, lang)}
                               </span>
                               {r.admissionTime && (
-                                <span className="text-[10px] text-slate-400 block font-mono">
+                                <span className="text-[10px] text-slate-400 block">
                                   {formatTime(r.admissionTime, lang)}
                                 </span>
                               )}
@@ -744,7 +793,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                                     {formatDate(r.dischargeDate, lang)}
                                   </span>
                                   {r.dischargeTime && (
-                                    <span className="text-[10px] text-slate-400 block font-mono">
+                                    <span className="text-[10px] text-slate-400 block">
                                       {formatTime(r.dischargeTime, lang)}
                                     </span>
                                   )}
@@ -758,10 +807,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                           </div>
 
                           {isDischarged && (
-                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                               <span className="text-slate-500">{isAr ? 'حالة الخروج:' : 'Outcome:'}</span>
                               <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${statusMeta.badgeClass}`}>
-                                {statusMeta.name} {r.transferLocation ? `→ ${r.transferLocation}` : ''}
+                                {statusMeta.name} {isTrans && r.transferLocation ? `→ ${r.transferLocation}` : ''}
                               </span>
                             </div>
                           )}
@@ -772,8 +821,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 )}
 
                 {/* Printable and Desktop Table View */}
-                <div className={`overflow-x-auto ${viewMode === 'cards' ? 'hidden print:block' : 'block'}`}>
-                  <table className="w-full text-sm text-left rtl:text-right whitespace-nowrap">
+                <div className={`overflow-x-auto print:overflow-visible ${viewMode === 'cards' ? 'hidden print:block' : 'block'}`}>
+                  <table className="report-census-table w-full text-sm text-left rtl:text-right whitespace-nowrap print:whitespace-normal">
                     <thead className="text-xs text-slate-600 uppercase bg-slate-100 border-b border-slate-300">
                       <tr>
                         <th className="px-3.5 py-3 font-bold">{isAr ? 'رقم الملف' : 'MRN'}</th>
@@ -791,6 +840,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                     <tbody className="divide-y divide-slate-100 text-xs">
                       {filteredRecords.map((r, idx) => {
                         const isDischarged = r.status === 'Discharged';
+                        const isTrans = String(r.dischargeStatus || '').toUpperCase() === 'TRANS';
                         const statusMeta = getDischargeStatusLabel(r.dischargeStatus, lang);
 
                         return (
@@ -801,7 +851,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                             }`}
                           >
                             <td className="px-3.5 py-2.5 font-mono font-semibold text-slate-700">
-                              #{r.medicalNo}
+                              <span dir="ltr" className="inline-block">#{r.medicalNo}</span>
                             </td>
                             <td className="px-3.5 py-2.5 font-bold text-slate-900">
                               {r.patientName}
@@ -809,15 +859,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                             <td className="px-3.5 py-2.5 text-slate-700">
                               <div>{formatDate(r.admissionDate, lang)}</div>
                               {r.admissionTime && (
-                                <div className="text-[10px] text-slate-400 font-mono">
+                                <div className="text-[10px] text-slate-400">
                                   {formatTime(r.admissionTime, lang)}
                                 </div>
                               )}
                             </td>
-                            <td className="px-3.5 py-2.5 text-slate-600 truncate max-w-[190px]" title={r.diagnosis}>
-                              {r.diagnosis}
+                            <td className="px-3.5 py-2.5 text-slate-600 truncate max-w-[190px] print:whitespace-normal print:max-w-none" title={r.diagnosis}>
+                              {r.diagnosis || '-'}
                             </td>
-                            <td className="px-3.5 py-2.5 text-slate-600 truncate max-w-[100px]">
+                            <td className="px-3.5 py-2.5 text-slate-600 truncate max-w-[100px] print:whitespace-normal print:max-w-none">
                               {r.pu && r.pu !== 'None' ? r.pu : '-'}
                             </td>
                             <td className="px-3.5 py-2.5 text-slate-700">
@@ -825,7 +875,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                                 <>
                                   <div>{formatDate(r.dischargeDate, lang)}</div>
                                   {r.dischargeTime && (
-                                    <div className="text-[10px] text-slate-400 font-mono">
+                                    <div className="text-[10px] text-slate-400">
                                       {formatTime(r.dischargeTime, lang)}
                                     </div>
                                   )}
@@ -843,7 +893,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                                   <span className={`px-2 py-0.5 rounded font-bold border text-[11px] inline-block ${statusMeta.badgeClass}`}>
                                     {statusMeta.code} - {statusMeta.name}
                                   </span>
-                                  {r.dischargeStatus === 'Trans' && r.transferLocation && (
+                                  {isTrans && r.transferLocation && (
                                     <div className="text-[11px] text-blue-600 font-medium mt-0.5">
                                       → {r.transferLocation}
                                     </div>
@@ -854,7 +904,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                               )}
                             </td>
                             <td
-                              className="px-3.5 py-2.5 text-slate-500 text-[11px] italic truncate max-w-[150px]"
+                              className="px-3.5 py-2.5 text-slate-500 text-[11px] italic truncate max-w-[150px] print:whitespace-normal print:max-w-none"
                               title={r.dischargeReason || ''}
                             >
                               {isDischarged && r.dischargeReason ? r.dischargeReason : '-'}
@@ -872,9 +922,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
             )}
           </div>
 
-          {/* ======================================================== */}
-          {/* OFFICIAL SIGNATURES & STAMP BLOCK (Visible on Print)    */}
-          {/* ======================================================== */}
+          {/* OFFICIAL SIGNATURES & STAMP BLOCK (Always 3 side-by-side in print & desktop) */}
           <div className="report-signature-block pt-6 border-t border-slate-300 print-avoid-break w-full">
             <div className="report-signature-grid grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-4 sm:gap-6 text-center text-xs text-slate-700 w-full">
               {/* ICU Head */}
@@ -889,8 +937,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </div>
                 <div className="space-y-2 mt-6">
                   <div className="border-b border-slate-300" />
-                  <div className="text-[10px] text-slate-400">
-                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  <div dir="ltr" className="text-[10px] text-slate-400 inline-block">
+                    {isAr ? `التاريخ: .... / .... / ${currentYear}` : `Date: .... / .... / ${currentYear}`}
                   </div>
                 </div>
               </div>
@@ -907,8 +955,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </div>
                 <div className="space-y-2 mt-6">
                   <div className="border-b border-slate-300" />
-                  <div className="text-[10px] text-slate-400">
-                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  <div dir="ltr" className="text-[10px] text-slate-400 inline-block">
+                    {isAr ? `التاريخ: .... / .... / ${currentYear}` : `Date: .... / .... / ${currentYear}`}
                   </div>
                 </div>
               </div>
@@ -923,8 +971,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
                 </div>
                 <div className="space-y-2">
                   <div className="border-b border-slate-300" />
-                  <div className="text-[10px] text-slate-400">
-                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  <div dir="ltr" className="text-[10px] text-slate-400 inline-block">
+                    {isAr ? `التاريخ: .... / .... / ${currentYear}` : `Date: .... / .... / ${currentYear}`}
                   </div>
                 </div>
               </div>

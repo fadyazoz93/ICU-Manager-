@@ -3,21 +3,73 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { Header } from './components/Header';
 import { EntryView } from './components/EntryView';
 import { DashboardView } from './components/DashboardView';
 import { HistoryView } from './components/HistoryView';
 import { ReportsView } from './components/ReportsView';
 import { PatientDetailsModal } from './components/PatientDetailsModal';
-import { getStoredRecords } from './services/storage';
+import { getStoredRecords, resetToDemoData } from './services/storage';
 import { PatientRecord } from './types/icu';
 
-export default function App() {
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Waheed ICU Manager runtime error:', error, info);
+  }
+
+  handleRecover = () => {
+    try {
+      resetToDemoData();
+    } catch {
+      // Ignore storage error during recovery
+    }
+    this.setState({ hasError: false });
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div dir="rtl" className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-lg max-w-md w-full p-6 text-center space-y-4">
+            <h2 className="text-lg font-bold text-slate-900">حدث خطأ غير متوقع في عرض البيانات</h2>
+            <p className="text-sm text-slate-600">
+              يمكنك استعادة البيانات المحفوظة وإعادة تحميل التطبيق بأمان.
+            </p>
+            <button
+              type="button"
+              onClick={this.handleRecover}
+              className="w-full py-2.5 px-4 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl transition"
+            >
+              إعادة تحميل واستعادة البيانات
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppContent() {
   const [currentView, setCurrentView] = useState<'entry' | 'dashboard' | 'history' | 'reports'>('history');
   const [lang, setLang] = useState<'ar' | 'en'>('ar');
   const [activeCount, setActiveCount] = useState<number>(0);
   const [prefilledMedicalNo, setPrefilledMedicalNo] = useState<string>('');
+  const [prefilledRecordId, setPrefilledRecordId] = useState<string>('');
   const [selectedPatient, setSelectedPatient] = useState<PatientRecord | null>(null);
 
   const updateActiveCount = () => {
@@ -39,8 +91,9 @@ export default function App() {
     };
   }, []);
 
-  const handleDischargePatient = (medicalNo: string) => {
+  const handleDischargePatient = (medicalNo: string, recordId?: string) => {
     setPrefilledMedicalNo(medicalNo);
+    setPrefilledRecordId(recordId || '');
     setCurrentView('entry');
   };
 
@@ -63,7 +116,10 @@ export default function App() {
           currentView={currentView}
           onSelectView={(v) => {
             setCurrentView(v);
-            if (v !== 'entry') setPrefilledMedicalNo('');
+            if (v !== 'entry') {
+              setPrefilledMedicalNo('');
+              setPrefilledRecordId('');
+            }
           }}
           lang={lang}
           onToggleLang={handleToggleLang}
@@ -77,9 +133,11 @@ export default function App() {
               <EntryView
                 lang={lang}
                 prefilledMedicalNo={prefilledMedicalNo}
+                prefilledRecordId={prefilledRecordId}
                 onPatientSaved={() => {
                   updateActiveCount();
                   setPrefilledMedicalNo('');
+                  setPrefilledRecordId('');
                 }}
                 onGoToHistory={() => setCurrentView('history')}
               />
@@ -110,7 +168,7 @@ export default function App() {
         </main>
       </div>
 
-      {/* Patient Details / Slip Modal */}
+      {/* Patient Details Modal */}
       {selectedPatient && (
         <PatientDetailsModal
           patient={selectedPatient}
@@ -119,5 +177,13 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
   );
 }

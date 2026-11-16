@@ -3,10 +3,8 @@ import { PatientRecord } from '../types/icu';
 import {
   X,
   Calendar,
-  Clock,
   CheckCircle2,
   Activity,
-  Bed,
 } from 'lucide-react';
 import {
   formatDate,
@@ -31,14 +29,15 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
   const isAr = lang === 'ar';
 
   const isDischarged = patient.status === 'Discharged';
+  const isTrans = String(patient.dischargeStatus || '').toUpperCase() === 'TRANS';
   const statusMeta = getDischargeStatusLabel(patient.dischargeStatus, lang);
   const stayDays = isDischarged
     ? patient.lengthOfStay || 1
     : calculateActiveStayDays(patient.admissionDate);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[92vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+      <div className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
         {/* Top Header */}
         <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -49,12 +48,13 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
               <h3 className="font-bold text-base sm:text-lg text-white">
                 {isAr ? 'ملف المريض بالعناية المركزة' : 'ICU Patient Record'}
               </h3>
-              <p className="text-xs text-slate-400 font-mono">
+              <p dir="ltr" className="text-xs text-slate-400 font-mono w-fit">
                 #{patient.medicalNo}
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
             aria-label="Close"
@@ -66,7 +66,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
         {/* Content Body */}
         <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
           {/* Identity & Status */}
-          <div className="flex justify-between items-start border-b border-slate-200 pb-4">
+          <div className="flex justify-between items-start border-b border-slate-200 pb-4 gap-3">
             <div>
               <div className="text-xs text-slate-400 uppercase font-semibold">
                 {isAr ? 'اسم المريض' : 'Patient Name'}
@@ -74,13 +74,15 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
               <div className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5">
                 {patient.patientName}
               </div>
-              <div className="text-xs text-slate-600 font-mono mt-1">
+              <div className="text-xs text-slate-600 mt-1">
                 {isAr ? 'رقم السجل الطبي (MRN):' : 'Medical Record No:'}{' '}
-                <span className="font-bold text-slate-900 text-sm">#{patient.medicalNo}</span>
+                <span dir="ltr" className="font-mono font-bold text-slate-900 text-sm inline-block">
+                  #{patient.medicalNo}
+                </span>
               </div>
             </div>
 
-            <div className="text-right">
+            <div className="text-end flex-shrink-0">
               <span
                 className={`px-3 py-1 rounded-full text-xs font-bold border inline-block ${
                   patient.status === 'Active'
@@ -96,7 +98,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                   ? 'تم الخروج (Discharged)'
                   : 'Discharged'}
               </span>
-              <div className="text-xs text-teal-800 font-bold mt-1.5 font-mono">
+              <div className="text-xs text-teal-800 font-bold mt-1.5">
                 {isAr ? 'مدة الإقامة:' : 'Length of Stay:'} {formatStayDuration(stayDays, lang)}
               </div>
             </div>
@@ -117,7 +119,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                   {formatDate(patient.admissionDate, lang, { withWeekday: true })}
                 </span>
                 {patient.admissionTime && (
-                  <span className="text-xs text-slate-500 block font-mono mt-0.5">
+                  <span className="text-xs text-slate-500 block mt-0.5">
                     {formatTime(patient.admissionTime, lang)}
                   </span>
                 )}
@@ -137,7 +139,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                   {isAr ? 'التشخيص الطبي عند الدخول:' : 'Primary Medical Diagnosis:'}
                 </span>
                 <p className="font-bold text-slate-900 mt-0.5 leading-relaxed">
-                  {patient.diagnosis}
+                  {patient.diagnosis || '-'}
                 </p>
               </div>
 
@@ -168,7 +170,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                     {formatDate(patient.dischargeDate, lang, { withWeekday: true })}
                   </span>
                   {patient.dischargeTime && (
-                    <span className="text-xs text-slate-500 block font-mono mt-0.5">
+                    <span className="text-xs text-slate-500 block mt-0.5">
                       {formatTime(patient.dischargeTime, lang)}
                     </span>
                   )}
@@ -181,7 +183,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                   <span className={`px-2.5 py-0.5 rounded text-xs font-bold border inline-block mt-0.5 ${statusMeta.badgeClass}`}>
                     {statusMeta.code} - {statusMeta.name}
                   </span>
-                  {patient.dischargeStatus === 'Trans' && patient.transferLocation && (
+                  {isTrans && patient.transferLocation && (
                     <div className="text-xs text-blue-700 font-semibold mt-1">
                       {isAr ? 'محول إلى:' : 'Transferred to:'} {patient.transferLocation}
                     </div>
@@ -192,7 +194,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                   <span className="text-xs text-slate-500 block font-medium">
                     {isAr ? 'إجمالي أيام الإقامة الفعلية:' : 'Total Length of Stay:'}
                   </span>
-                  <span className="font-black text-slate-900 font-mono text-base">
+                  <span className="font-black text-slate-900 text-base">
                     {formatStayDuration(patient.lengthOfStay, lang)}
                   </span>
                 </div>
@@ -224,6 +226,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
         {/* Footer (Close button only) */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end items-center">
           <button
+            type="button"
             onClick={onClose}
             className="w-full sm:w-auto px-6 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer"
           >

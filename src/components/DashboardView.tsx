@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Chart, registerables } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { getDashboardData } from '../services/storage';
+import { getDashboardData, getLatestRecordMonth } from '../services/storage';
 import { DashboardMonthData } from '../types/icu';
-import { BarChart3, TrendingUp, Download, Calendar, Users, Activity, HeartCrack, Bed } from 'lucide-react';
-import { formatYearMonth } from '../utils/dateFormatter';
+import { BarChart3, TrendingUp, Download, Calendar, Users, Activity, HeartCrack, Bed, AlertTriangle } from 'lucide-react';
+import { formatYearMonth, getLocalCurrentMonth } from '../utils/dateFormatter';
 
 Chart.register(...registerables, ChartDataLabels);
 
@@ -12,20 +12,20 @@ interface DashboardViewProps {
   lang: 'en' | 'ar';
 }
 
+function subtractMonths(yearMonth: string, count: number): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  if (isNaN(y) || isNaN(m)) return yearMonth;
+  const d = new Date(y, m - 1 - count, 1);
+  return getLocalCurrentMonth(d);
+}
+
 export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
   const isAr = lang === 'ar';
 
-  // Date range state
-  const [startMonth, setStartMonth] = useState(() => {
-    const now = new Date();
-    const d = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    return d.toISOString().slice(0, 7);
-  });
-  const [endMonth, setEndMonth] = useState(() => {
-    return new Date().toISOString().slice(0, 7);
-  });
-
+  const [startMonth, setStartMonth] = useState(() => subtractMonths(getLocalCurrentMonth(), 5));
+  const [endMonth, setEndMonth] = useState(() => getLocalCurrentMonth());
   const [dashboardData, setDashboardData] = useState<DashboardMonthData[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Chart canvas refs
   const volumeCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -35,24 +35,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
   const chartVolumeRef = useRef<Chart | null>(null);
   const chartOutcomesRef = useRef<Chart | null>(null);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  const loadDashboard = () => {
-    if (!startMonth || !endMonth) return;
-    if (startMonth > endMonth) {
-      alert(isAr ? 'تاريخ البداية لا يمكن أن يكون بعد تاريخ النهاية' : 'Start month cannot be after end month');
+  const loadRange = (sMonth: string, eMonth: string) => {
+    if (!sMonth || !eMonth) return;
+    if (sMonth > eMonth) {
+      setErrorMsg(isAr ? 'شهر البداية لا يمكن أن يكون بعد شهر النهاية' : 'Start month cannot be after end month');
       return;
     }
-
-    const data = getDashboardData(startMonth, endMonth);
+    setErrorMsg(null);
+    const data = getDashboardData(sMonth, eMonth);
     setDashboardData(data);
     renderCharts(data);
   };
 
+  useEffect(() => {
+    const curEnd = getLocalCurrentMonth();
+    const curStart = subtractMonths(curEnd, 5);
+    const initial = getDashboardData(curStart, curEnd);
+    const hasActivity = initial.some((d) => d.admissions > 0 || d.discharges > 0 || d.totalDays > 0);
+
+    if (!hasActivity) {
+      const latestEnd = getLatestRecordMonth();
+      const latestStart = subtractMonths(latestEnd, 5);
+      setStartMonth(latestStart);
+      setEndMonth(latestEnd);
+      loadRange(latestStart, latestEnd);
+    } else {
+      setDashboardData(initial);
+      renderCharts(initial);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (dashboardData.length > 0) {
+      renderCharts(dashboardData);
+    }
+    const onChanged = () => loadRange(startMonth, endMonth);
+    window.addEventListener('icu-records-changed', onChanged);
+    return () => window.removeEventListener('icu-records-changed', onChanged);
+  }, [lang]);
+
+  const loadDashboard = () => {
+    loadRange(startMonth, endMonth);
+  };
+
   const renderCharts = (data: DashboardMonthData[]) => {
-    const labels = data.map(d => formatYearMonth(d.month, lang));
+    const labels = data.map((d) => formatYearMonth(d.month, lang));
 
     const commonDataLabels = {
       display: function (context: any) {
@@ -64,7 +91,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
       },
     };
 
-    // Chart 1: Unit Activity (Mixed: Line for Patient Days, Bars for Adm & Dis)
+    // Chart 1: Unit Activity
     if (volumeCanvasRef.current) {
       if (chartVolumeRef.current) {
         chartVolumeRef.current.destroy();
@@ -74,12 +101,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
       if (ctxVol) {
         chartVolumeRef.current = new Chart(ctxVol, {
           data: {
-            labels: labels,
+            labels,
             datasets: [
               {
                 type: 'line',
                 label: isAr ? 'إجمالي أيام المرضى (Patient Days)' : 'Total Patient Days',
-                data: data.map(d => d.totalDays),
+                data: data.map((d) => d.totalDays),
                 borderColor: 'rgba(20, 184, 166, 1)',
                 backgroundColor: 'rgba(20, 184, 166, 0.2)',
                 borderWidth: 3,
@@ -98,7 +125,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
               {
                 type: 'bar',
                 label: isAr ? 'حالات الدخول (Admissions)' : 'Admissions',
-                data: data.map(d => d.admissions),
+                data: data.map((d) => d.admissions),
                 backgroundColor: 'rgba(59, 130, 246, 0.75)',
                 borderColor: 'rgba(59, 130, 246, 1)',
                 borderRadius: 4,
@@ -113,7 +140,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
               {
                 type: 'bar',
                 label: isAr ? 'حالات الخروج (Discharges)' : 'Discharges',
-                data: data.map(d => d.discharges),
+                data: data.map((d) => d.discharges),
                 backgroundColor: 'rgba(249, 115, 22, 0.75)',
                 borderColor: 'rgba(249, 115, 22, 1)',
                 borderRadius: 4,
@@ -164,7 +191,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
       }
     }
 
-    // Chart 2: Discharge Outcomes (Stacked Bar)
+    // Chart 2: Discharge Outcomes
     if (outcomesCanvasRef.current) {
       if (chartOutcomesRef.current) {
         chartOutcomesRef.current.destroy();
@@ -175,29 +202,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
         chartOutcomesRef.current = new Chart(ctxOut, {
           type: 'bar',
           data: {
-            labels: labels,
+            labels,
             datasets: [
               {
                 label: isAr ? 'DIS (خروج للمنزل)' : 'DIS',
-                data: data.map(d => d.breakdown.DIS),
+                data: data.map((d) => d.breakdown.DIS),
                 backgroundColor: 'rgba(100, 116, 139, 0.85)',
                 datalabels: { color: 'white' },
               },
               {
                 label: isAr ? 'TRANS (تحويل)' : 'TRANS',
-                data: data.map(d => d.breakdown.TRANS),
+                data: data.map((d) => d.breakdown.TRANS),
                 backgroundColor: 'rgba(59, 130, 246, 0.85)',
                 datalabels: { color: 'white' },
               },
               {
                 label: isAr ? 'DAMA (ضد النصح)' : 'DAMA',
-                data: data.map(d => d.breakdown.DAMA),
+                data: data.map((d) => d.breakdown.DAMA),
                 backgroundColor: 'rgba(245, 158, 11, 0.85)',
                 datalabels: { color: 'white' },
               },
               {
                 label: isAr ? 'DIED (وفاة)' : 'DIED',
-                data: data.map(d => d.breakdown.DIED),
+                data: data.map((d) => d.breakdown.DIED),
                 backgroundColor: 'rgba(239, 68, 68, 0.85)',
                 datalabels: { color: 'white' },
               },
@@ -231,7 +258,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
     }
   };
 
-  // Clean up charts on unmount
   useEffect(() => {
     return () => {
       chartVolumeRef.current?.destroy();
@@ -243,7 +269,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
     window.print();
   };
 
-  // Aggregate metrics
   const totalAdm = dashboardData.reduce((acc, cur) => acc + cur.admissions, 0);
   const totalDis = dashboardData.reduce((acc, cur) => acc + cur.discharges, 0);
   const totalDays = dashboardData.reduce((acc, cur) => acc + cur.totalDays, 0);
@@ -255,52 +280,65 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
     <div className="space-y-6">
       {/* Date Filter & Export Bar */}
       <div
-        className="bg-white p-4 sm:p-5 rounded-2xl shadow-md border border-slate-200 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 items-stretch sm:items-end"
+        className="bg-white p-4 sm:p-5 rounded-2xl shadow-md border border-slate-200 space-y-3"
         data-html2pdf-ignore
       >
-        <div className="flex-1 min-w-[140px]">
-          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-            <Calendar className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
-            {isAr ? 'شهر البداية (Start Month)' : 'Start Month'}
-          </label>
-          <input
-            type="month"
-            value={startMonth}
-            onChange={(e) => setStartMonth(e.target.value)}
-            className="w-full p-2.5 border border-slate-300 rounded-xl text-sm bg-white font-medium focus:ring-2 focus:ring-indigo-500"
-          />
+        <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 items-stretch sm:items-end">
+          <div className="flex-1 min-w-[140px]">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              <Calendar className="w-3.5 h-3.5 inline mx-1 text-slate-400" />
+              {isAr ? 'شهر البداية (Start Month)' : 'Start Month'}
+            </label>
+            <input
+              type="month"
+              dir="ltr"
+              value={startMonth}
+              onChange={(e) => setStartMonth(e.target.value)}
+              className="w-full p-2.5 border border-slate-300 rounded-xl text-sm bg-white font-medium font-mono focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="flex-1 min-w-[140px]">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+              <Calendar className="w-3.5 h-3.5 inline mx-1 text-slate-400" />
+              {isAr ? 'شهر النهاية (End Month)' : 'End Month'}
+            </label>
+            <input
+              type="month"
+              dir="ltr"
+              value={endMonth}
+              onChange={(e) => setEndMonth(e.target.value)}
+              className="w-full p-2.5 border border-slate-300 rounded-xl text-sm bg-white font-medium font-mono focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={loadDashboard}
+              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm shadow-indigo-600/20 transition flex items-center justify-center gap-1.5"
+            >
+              <TrendingUp className="w-4 h-4" />
+              <span>{isAr ? 'تحديث الرسوم' : 'Update'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePrintOrPdf}
+              className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm shadow-red-600/20 transition flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              <span>{isAr ? 'طباعة / PDF' : 'PDF / Print'}</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex-1 min-w-[140px]">
-          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-            <Calendar className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
-            {isAr ? 'شهر النهاية (End Month)' : 'End Month'}
-          </label>
-          <input
-            type="month"
-            value={endMonth}
-            onChange={(e) => setEndMonth(e.target.value)}
-            className="w-full p-2.5 border border-slate-300 rounded-xl text-sm bg-white font-medium focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <button
-            onClick={loadDashboard}
-            className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm shadow-indigo-600/20 transition flex items-center justify-center gap-1.5"
-          >
-            <TrendingUp className="w-4 h-4" />
-            <span>{isAr ? 'تحديث الرسوم' : 'Update'}</span>
-          </button>
-
-          <button
-            onClick={handlePrintOrPdf}
-            className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-sm shadow-red-600/20 transition flex items-center justify-center gap-2"
-          >
-            <Download className="w-4 h-4" />
-            <span>{isAr ? 'طباعة / PDF' : 'PDF / Print'}</span>
-          </button>
-        </div>
+        {errorMsg && (
+          <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs font-medium flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
       </div>
 
       {/* KPI Stats Overview */}
@@ -360,14 +398,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ lang }) => {
       <div id="dashboard-content" className="space-y-6">
         {/* CHART 1: Unit Activity & Patient Days */}
         <div className="bg-white rounded-2xl shadow-md border border-slate-200 p-6">
-          <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3 gap-2 flex-wrap">
             <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
               <span className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
                 <TrendingUp className="w-5 h-5" />
               </span>
               <span>{isAr ? 'نشاط وحدة العناية وأيام المرضى (Unit Activity & Patient Days)' : 'Unit Activity & Patient Days'}</span>
             </h2>
-            <span className="text-xs text-slate-500 font-medium">
+            <span dir="ltr" className="text-xs text-slate-500 font-medium font-mono inline-block">
               {startMonth} → {endMonth}
             </span>
           </div>

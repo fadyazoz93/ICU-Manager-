@@ -5,62 +5,206 @@
 import { PatientRecord, MonthlyReportData, PeriodReportData, DashboardMonthData, DischargeStatus, PatientStatus } from '../types/icu';
 import * as XLSX from 'xlsx';
 import sheetData from './sheetData.json';
+import {
+  getLocalTodayDate,
+  getLocalCurrentMonth,
+  normalizeDateStr,
+  normalizeTimeStr,
+  parseYMD,
+} from '../utils/dateFormatter';
 
 const STORAGE_KEY = 'waheed_icu_records_v1';
 
-// Real ICU records directly from Google Sheet (777 records)
-const INITIAL_RECORDS: PatientRecord[] = sheetData as PatientRecord[];
+// In-memory cache ensures operations succeed even on browsers/WebViews where localStorage is blocked or full
+let memoryRecords: PatientRecord[] | null = null;
 
-export function getStoredRecords(): PatientRecord[] {
+function safeLocalStorageGet(key: string): string | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_RECORDS));
-      return INITIAL_RECORDS;
-    }
-    const parsed = JSON.parse(raw);
-    // If user has old small sample data (e.g. fewer than 50 records), automatically load the real 777 Google Sheet records!
-    if (Array.isArray(parsed) && parsed.length < 50 && INITIAL_RECORDS.length > 50) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_RECORDS));
-      return INITIAL_RECORDS;
-    }
-    return Array.isArray(parsed) ? parsed : INITIAL_RECORDS;
-  } catch (err) {
-    console.error('Failed to load ICU records from localStorage:', err);
-    return INITIAL_RECORDS;
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
   }
 }
 
-export function saveStoredRecords(records: PatientRecord[]): void {
+function safeLocalStorageSet(key: string, value: string): boolean {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-    // Dispatch custom event for cross-component reactive updates
-    window.dispatchEvent(new CustomEvent('icu-records-changed', { detail: records }));
-  } catch (err) {
-    console.error('Failed to save ICU records:', err);
+    if (typeof window === 'undefined' || !window.localStorage) return false;
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+export function cleanMedicalNo(mno?: string | number | null): string {
+  return String(mno ?? '').trim().replace(/^#+/, '').trim().toLowerCase();
+}
+
+function normalizeDischargeStatusValue(val?: string | null): DischargeStatus | 'Trans' | undefined {
+  const s = String(val ?? '').trim();
+  if (!s) return undefined;
+  const upper = s.toUpperCase();
+  if (upper === 'DIED') return 'DIED';
+  if (upper.startsWith('TRANS')) return 'Trans';
+  if (upper.startsWith('DAMA')) return 'DAMA';
+  if (upper === 'DIS') return 'DIS';
+  return s as DischargeStatus;
+}
+
+export function normalizeRecord(raw: any, index = 0): PatientRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const medicalNo = String(raw.medicalNo ?? '').trim().replace(/^#+/, '').trim();
+  const patientName = String(raw.patientName ?? '').trim();
+  if (!medicalNo && !patientName) return null;
+
+  const rawStatus = String(raw.status ?? '').trim().toLowerCase();
+  const status: PatientStatus =
+    rawStatus === 'active' || rawStatus === 'منوم' ? 'Active' : 'Discharged';
+
+  const admissionDate = normalizeDateStr(raw.admissionDate) || String(raw.admissionDate ?? '').trim();
+  const admissionTime = normalizeTimeStr(raw.admissionTime, '12:00');
+  const dischargeDate = status === 'Discharged'
+    ? (normalizeDateStr(raw.dischargeDate) || String(raw.dischargeDate ?? '').trim() || undefined)
+    : undefined;
+  const dischargeTime = status === 'Discharged'
+    ? (normalizeTimeStr(raw.dischargeTime) || undefined)
+    : undefined;
+
+  const parsedStay = typeof raw.lengthOfStay === 'number' && !isNaN(raw.lengthOfStay)
+    ? raw.lengthOfStay
+    : parseInt(String(raw.lengthOfStay ?? '').replace(/[^0-9]/g, ''), 10);
+
+  return {
+    id: String(raw.id || `icu-${medicalNo || index}-${index}`),
+    medicalNo: medicalNo || `UNKNOWN-${index}`,
+    patientName: patientName || (medicalNo ? `Patient #${medicalNo}` : 'Unknown'),
+    status,
+    admissionDate,
+    admissionTime,
+    fromLocation: String(raw.fromLocation ?? '').trim(),
+    diagnosis: String(raw.diagnosis ?? '').trim(),
+    pu: String(raw.pu ?? 'None').trim() || 'None',
+    dischargeDate,
+    dischargeTime,
+    dischargeStatus: status === 'Discharged' ? normalizeDischargeStatusValue(raw.dischargeStatus) : undefined,
+    transferLocation: String(raw.transferLocation ?? '').trim() || undefined,
+    dischargeReason: String(raw.dischargeReason ?? '').trim() || undefined,
+    lengthOfStay: !isNaN(parsedStay) && parsedStay > 0 ? parsedStay : undefined,
+    createdAt: raw.createdAt ? String(raw.createdAt) : undefined,
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : undefined,
+  };
+}
+
+function normalizeRecordsList(list: any[]): PatientRecord[] {
+  const result: PatientRecord[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const norm = normalizeRecord(list[i], i);
+    if (norm) result.push(norm);
+  }
+  return result;
+}
+
+// Real ICU records directly from Google Sheet (777 records), pre-normalized
+const INITIAL_RECORDS: PatientRecord[] = normalizeRecordsList(Array.isArray(sheetData) ? sheetData : []);
+
+export function getStoredRecords(): PatientRecord[] {
+  if (memoryRecords && memoryRecords.length > 0) {
+    return memoryRecords;
+  }
+
+  try {
+    const raw = safeLocalStorageGet(STORAGE_KEY);
+    if (!raw) {
+      memoryRecords = [...INITIAL_RECORDS];
+      safeLocalStorageSet(STORAGE_KEY, JSON.stringify(memoryRecords));
+      return memoryRecords;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      memoryRecords = [...INITIAL_RECORDS];
+      safeLocalStorageSet(STORAGE_KEY, JSON.stringify(memoryRecords));
+      return memoryRecords;
+    }
+
+    const normalized = normalizeRecordsList(parsed);
+    // If user has old small sample data (e.g. fewer than 50 records), automatically load the real 777 Google Sheet records!
+    if (normalized.length < 50 && INITIAL_RECORDS.length > 50) {
+      memoryRecords = [...INITIAL_RECORDS];
+      safeLocalStorageSet(STORAGE_KEY, JSON.stringify(memoryRecords));
+      return memoryRecords;
+    }
+
+    memoryRecords = normalized;
+    return memoryRecords;
+  } catch (err) {
+    console.error('Failed to load ICU records from localStorage, falling back to bundled dataset:', err);
+    memoryRecords = [...INITIAL_RECORDS];
+    return memoryRecords;
+  }
+}
+
+export function saveStoredRecords(records: PatientRecord[]): boolean {
+  const normalized = normalizeRecordsList(records);
+  memoryRecords = normalized;
+  const persisted = safeLocalStorageSet(STORAGE_KEY, JSON.stringify(normalized));
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('icu-records-changed', { detail: normalized }));
+    }
+  } catch {
+    // Ignore event dispatch failure on restricted environments
+  }
+  return persisted;
 }
 
 export function calculateDaysBetween(startDateStr: string, endDateStr: string): number {
-  if (!startDateStr || !endDateStr) return 0;
-  const [sY, sM, sD] = startDateStr.split('-').map(Number);
-  const [eY, eM, eD] = endDateStr.split('-').map(Number);
-  if (!sY || !sM || !sD || !eY || !eM || !eD) return 0;
-  const startUTC = Date.UTC(sY, sM - 1, sD);
-  const endUTC = Date.UTC(eY, eM - 1, eD);
+  const s = parseYMD(startDateStr);
+  const e = parseYMD(endDateStr);
+  if (!s || !e) return 0;
+  const startUTC = Date.UTC(s.year, s.month - 1, s.day);
+  const endUTC = Date.UTC(e.year, e.month - 1, e.day);
   const diffDays = Math.round((endUTC - startUTC) / (1000 * 60 * 60 * 24));
   return Math.max(1, diffDays);
 }
 
 /**
- * Find active patient record by Medical No
+ * Find the most recent YYYY-MM in stored records (used when device clock has no matching records)
  */
-export function findActivePatient(medicalNo: string): PatientRecord | null {
-  if (!medicalNo) return null;
-  const cleanMno = medicalNo.trim().toLowerCase();
+export function getLatestRecordMonth(): string {
   const records = getStoredRecords();
-  const found = records.find(r => r.status === 'Active' && r.medicalNo.trim().toLowerCase() === cleanMno);
-  return found || null;
+  let latest = '';
+  for (const r of records) {
+    const admM = normalizeDateStr(r.admissionDate).slice(0, 7);
+    if (admM && admM > latest) latest = admM;
+    if (r.dischargeDate) {
+      const disM = normalizeDateStr(r.dischargeDate).slice(0, 7);
+      if (disM && disM > latest) latest = disM;
+    }
+  }
+  return latest || getLocalCurrentMonth();
+}
+
+/**
+ * Find active patient record by Medical No or exact record ID
+ */
+export function findActivePatient(medicalNo: string, recordId?: string): PatientRecord | null {
+  const records = getStoredRecords();
+  if (recordId) {
+    const byId = records.find(r => r.id === recordId && r.status === 'Active');
+    if (byId) return byId;
+  }
+
+  const cleanMno = cleanMedicalNo(medicalNo);
+  if (!cleanMno) return null;
+
+  // Prefer most recent active admission if duplicate MRNs exist
+  const matches = records.filter(r => r.status === 'Active' && cleanMedicalNo(r.medicalNo) === cleanMno);
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+  return [...matches].sort((a, b) => (b.admissionDate || '').localeCompare(a.admissionDate || ''))[0];
 }
 
 /**
@@ -76,28 +220,31 @@ export function saveAdmission(data: {
   pu?: string;
 }): { success: boolean; message: string; record?: PatientRecord } {
   const records = getStoredRecords();
-  
+  const cleanMno = cleanMedicalNo(data.medicalNo);
+  const normalizedAdmDate = normalizeDateStr(data.admissionDate) || getLocalTodayDate();
+  const normalizedAdmTime = normalizeTimeStr(data.admissionTime, '12:00');
+
   // Check if patient already active
   const existingActive = records.find(
-    r => r.status === 'Active' && r.medicalNo.trim().toLowerCase() === data.medicalNo.trim().toLowerCase()
+    r => r.status === 'Active' && cleanMedicalNo(r.medicalNo) === cleanMno
   );
   if (existingActive) {
     return {
       success: false,
-      message: `المريض مسجل كحالة نشطة بالفعل (Medical No: ${data.medicalNo}) منذ ${existingActive.admissionDate}`
+      message: `المريض مسجل كحالة نشطة بالفعل (Medical No: ${existingActive.medicalNo}) منذ ${existingActive.admissionDate}`
     };
   }
 
   const newRecord: PatientRecord = {
-    id: 'icu-' + Date.now(),
-    medicalNo: data.medicalNo.trim(),
-    patientName: data.patientName.trim(),
+    id: 'icu-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    medicalNo: String(data.medicalNo || '').trim().replace(/^#+/, '').trim(),
+    patientName: String(data.patientName || '').trim(),
     status: 'Active',
-    admissionDate: data.admissionDate,
-    admissionTime: data.admissionTime || '12:00',
-    fromLocation: data.fromLocation.trim(),
-    diagnosis: data.diagnosis.trim(),
-    pu: data.pu?.trim() || 'None',
+    admissionDate: normalizedAdmDate,
+    admissionTime: normalizedAdmTime,
+    fromLocation: String(data.fromLocation || '').trim(),
+    diagnosis: String(data.diagnosis || '').trim(),
+    pu: String(data.pu || '').trim() || 'None',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -113,9 +260,10 @@ export function saveAdmission(data: {
 }
 
 /**
- * Save discharge for active patient
+ * Save discharge for active patient (supports matching by exact recordId OR medicalNo)
  */
 export function saveDischarge(data: {
+  recordId?: string;
   medicalNo: string;
   dischargeDate: string;
   dischargeTime: string;
@@ -123,10 +271,18 @@ export function saveDischarge(data: {
   transferLocation?: string;
   dischargeReason?: string;
 }): { success: boolean; message: string; record?: PatientRecord } {
-  const records = getStoredRecords();
-  const cleanMno = data.medicalNo.trim().toLowerCase();
-  
-  const idx = records.findIndex(r => r.status === 'Active' && r.medicalNo.trim().toLowerCase() === cleanMno);
+  const records = [...getStoredRecords()];
+  const cleanMno = cleanMedicalNo(data.medicalNo);
+
+  let idx = -1;
+  if (data.recordId) {
+    idx = records.findIndex(r => r.id === data.recordId && r.status === 'Active');
+  }
+  if (idx === -1 && cleanMno) {
+    // Pick matching active record (if duplicates exist, pick newest or first active)
+    idx = records.findIndex(r => r.status === 'Active' && cleanMedicalNo(r.medicalNo) === cleanMno);
+  }
+
   if (idx === -1) {
     return {
       success: false,
@@ -135,35 +291,47 @@ export function saveDischarge(data: {
   }
 
   const existing = records[idx];
-  
-  // Validation: discharge date cannot be before admission date
-  if (data.dischargeDate < existing.admissionDate) {
+  const normAdmDate = normalizeDateStr(existing.admissionDate) || existing.admissionDate;
+  const normDisDate = normalizeDateStr(data.dischargeDate);
+
+  if (!normDisDate) {
     return {
       success: false,
-      message: `تاريخ الخروج (${data.dischargeDate}) لا يمكن أن يكون قبل تاريخ الدخول (${existing.admissionDate})`
+      message: `تاريخ الخروج غير صالح (${data.dischargeDate}). يرجى اختيار تاريخ صحيح.`
     };
   }
 
-  const stayDays = calculateDaysBetween(existing.admissionDate, data.dischargeDate);
+  // Validation: discharge date cannot be before admission date
+  if (normAdmDate && normDisDate < normAdmDate) {
+    return {
+      success: false,
+      message: `تاريخ الخروج (${normDisDate}) لا يمكن أن يكون قبل تاريخ الدخول (${normAdmDate})`
+    };
+  }
+
+  const stayDays = calculateDaysBetween(normAdmDate, normDisDate);
+  const normDisTime = normalizeTimeStr(data.dischargeTime, '12:00');
+  const normStatus = normalizeDischargeStatusValue(data.dischargeStatus) || 'DIS';
+  const isTransfer = String(normStatus).toUpperCase() === 'TRANS';
 
   const updatedRecord: PatientRecord = {
     ...existing,
     status: 'Discharged',
-    dischargeDate: data.dischargeDate,
-    dischargeTime: data.dischargeTime || '12:00',
-    dischargeStatus: (data.dischargeStatus as DischargeStatus | 'Trans') || 'DIS',
-    transferLocation: data.dischargeStatus === 'Trans' ? (data.transferLocation || '') : undefined,
-    dischargeReason: data.dischargeReason || '',
+    dischargeDate: normDisDate,
+    dischargeTime: normDisTime,
+    dischargeStatus: normStatus,
+    transferLocation: isTransfer ? (String(data.transferLocation || '').trim() || undefined) : undefined,
+    dischargeReason: String(data.dischargeReason || '').trim(),
     lengthOfStay: stayDays,
     updatedAt: new Date().toISOString()
   };
 
   records[idx] = updatedRecord;
-  saveStoredRecords([...records]);
+  saveStoredRecords(records);
 
   return {
     success: true,
-    message: `تم تسجيل خروج المريض بنجاح: ${updatedRecord.patientName} - الحالة: ${updatedRecord.dischargeStatus}`,
+    message: `تم تسجيل خروج المريض بنجاح: ${updatedRecord.patientName} - الحالة: ${updatedRecord.dischargeStatus} (${stayDays} يوم)`,
     record: updatedRecord
   };
 }
@@ -182,10 +350,10 @@ export function deleteRecord(id: string): boolean {
 }
 
 /**
- * Reset data to initial demo data
+ * Reset data to initial sheet records
  */
 export function resetToDemoData(): void {
-  saveStoredRecords(INITIAL_RECORDS);
+  saveStoredRecords([...INITIAL_RECORDS]);
 }
 
 /**
@@ -204,8 +372,7 @@ export function importRecordsFromJson(jsonString: string): { success: boolean; c
     if (!Array.isArray(data)) {
       return { success: false, count: 0, error: 'الملف لا يحتوي على مصفوفة بيانات صالحة' };
     }
-    // Simple schema validation
-    const valid = data.filter(d => d.medicalNo && d.patientName && d.admissionDate);
+    const valid = normalizeRecordsList(data);
     if (valid.length === 0) {
       return { success: false, count: 0, error: 'لم يتم العثور على سجلات مرضى صالحة' };
     }
@@ -222,9 +389,8 @@ export function importRecordsFromJson(jsonString: string): { success: boolean; c
  */
 export function getMonthlyReport(monthStr: string): MonthlyReportData {
   const records = getStoredRecords();
-  if (!monthStr || !monthStr.includes('-')) {
-    const now = new Date();
-    monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) {
+    monthStr = getLocalCurrentMonth();
   }
 
   const [yearStr, mStr] = monthStr.split('-');
@@ -236,7 +402,7 @@ export function getMonthlyReport(monthStr: string): MonthlyReportData {
   const lastDay = new Date(year, month, 0).getDate();
   const monthEnd = `${yearStr}-${mStr.padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getLocalTodayDate();
 
   let admissionsCount = 0;
   let dischargesCount = 0;
@@ -252,45 +418,45 @@ export function getMonthlyReport(monthStr: string): MonthlyReportData {
   const monthlyRecords: (PatientRecord & { reportDays: number })[] = [];
 
   records.forEach(r => {
+    const admDate = normalizeDateStr(r.admissionDate);
+    if (!admDate) return;
+
+    const disDate = normalizeDateStr(r.dischargeDate);
     const isDischarged = r.status === 'Discharged';
-    const effectiveDischarge = isDischarged && r.dischargeDate ? r.dischargeDate : '9999-99-99';
+    const effectiveDischarge = isDischarged && disDate ? disDate : '9999-99-99';
 
     // A patient was present in the ICU during this month if:
     // admissionDate <= monthEnd AND (not discharged OR dischargeDate >= monthStart)
-    const wasInICU = r.admissionDate <= monthEnd && effectiveDischarge >= monthStart;
+    const wasInICU = admDate <= monthEnd && effectiveDischarge >= monthStart;
 
     if (wasInICU) {
       // 1. Admission in this month?
-      if (r.admissionDate.startsWith(monthStr)) {
+      if (admDate.startsWith(monthStr)) {
         admissionsCount++;
       }
 
       // 2. Discharge in this month?
-      if (isDischarged && r.dischargeDate && r.dischargeDate.startsWith(monthStr)) {
+      if (isDischarged && disDate && disDate.startsWith(monthStr)) {
         dischargesCount++;
-        const st = (r.dischargeStatus || '').toUpperCase();
-        if (st === 'TRANS') breakdown.TRANS++;
-        else if (st === 'DAMA') breakdown.DAMA++;
+        const st = String(r.dischargeStatus || '').toUpperCase();
+        if (st.startsWith('TRANS')) breakdown.TRANS++;
+        else if (st.startsWith('DAMA')) breakdown.DAMA++;
         else if (st === 'DIED') breakdown.DIED++;
         else breakdown.DIS++;
       }
 
       // 3. Compute Patient Days spent inside this month
-      // start of patient stay in this month = max(admissionDate, monthStart)
-      const stayStart = r.admissionDate > monthStart ? r.admissionDate : monthStart;
-      
-      // end of patient stay in this month = min(dischargeDate or today, monthEnd)
+      const stayStart = admDate > monthStart ? admDate : monthStart;
+
       let stayEnd: string;
-      if (isDischarged && r.dischargeDate) {
-        stayEnd = r.dischargeDate < monthEnd ? r.dischargeDate : monthEnd;
+      if (isDischarged && disDate) {
+        stayEnd = disDate < monthEnd ? disDate : monthEnd;
       } else {
-        // Active patient: up to today (or monthEnd if month is past)
         const activeCeil = todayStr < monthEnd ? todayStr : monthEnd;
         stayEnd = activeCeil >= stayStart ? activeCeil : stayStart;
       }
 
       let daysInMonth = calculateDaysBetween(stayStart, stayEnd);
-      // Ensure at least 1 day if patient was admitted in that month
       if (daysInMonth < 1) daysInMonth = 1;
 
       totalDaysCount += daysInMonth;
@@ -306,7 +472,7 @@ export function getMonthlyReport(monthStr: string): MonthlyReportData {
   monthlyRecords.sort((a, b) => {
     if (a.status === 'Active' && b.status !== 'Active') return -1;
     if (a.status !== 'Active' && b.status === 'Active') return 1;
-    return b.admissionDate.localeCompare(a.admissionDate);
+    return String(b.admissionDate || '').localeCompare(String(a.admissionDate || ''));
   });
 
   const mortalityRate = dischargesCount > 0 ? parseFloat(((breakdown.DIED / dischargesCount) * 100).toFixed(1)) : 0;
@@ -331,11 +497,10 @@ export function getMonthlyReport(monthStr: string): MonthlyReportData {
  */
 export function getPeriodReport(startDate: string, endDate: string, customTitle?: string): PeriodReportData {
   const records = getStoredRecords();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getLocalTodayDate();
 
-  // Normalize dates
-  const sDate = startDate || todayStr;
-  const eDate = endDate || todayStr;
+  const sDate = normalizeDateStr(startDate) || todayStr;
+  const eDate = normalizeDateStr(endDate) || todayStr;
   const minDate = sDate <= eDate ? sDate : eDate;
   const maxDate = sDate <= eDate ? eDate : sDate;
 
@@ -353,33 +518,34 @@ export function getPeriodReport(startDate: string, endDate: string, customTitle?
   const periodRecords: (PatientRecord & { reportDays: number })[] = [];
 
   records.forEach(r => {
+    const admDate = normalizeDateStr(r.admissionDate);
+    if (!admDate) return;
+
+    const disDate = normalizeDateStr(r.dischargeDate);
     const isDischarged = r.status === 'Discharged';
-    const effectiveDischarge = isDischarged && r.dischargeDate ? r.dischargeDate : '9999-99-99';
+    const effectiveDischarge = isDischarged && disDate ? disDate : '9999-99-99';
 
     // In ICU during this window if admissionDate <= maxDate AND effectiveDischarge >= minDate
-    const wasInICU = r.admissionDate <= maxDate && effectiveDischarge >= minDate;
+    const wasInICU = admDate <= maxDate && effectiveDischarge >= minDate;
 
     if (wasInICU) {
-      // 1. Admission in this window?
-      if (r.admissionDate >= minDate && r.admissionDate <= maxDate) {
+      if (admDate >= minDate && admDate <= maxDate) {
         admissionsCount++;
       }
 
-      // 2. Discharge in this window?
-      if (isDischarged && r.dischargeDate && r.dischargeDate >= minDate && r.dischargeDate <= maxDate) {
+      if (isDischarged && disDate && disDate >= minDate && disDate <= maxDate) {
         dischargesCount++;
-        const st = (r.dischargeStatus || '').toUpperCase();
-        if (st === 'TRANS') breakdown.TRANS++;
-        else if (st === 'DAMA') breakdown.DAMA++;
+        const st = String(r.dischargeStatus || '').toUpperCase();
+        if (st.startsWith('TRANS')) breakdown.TRANS++;
+        else if (st.startsWith('DAMA')) breakdown.DAMA++;
         else if (st === 'DIED') breakdown.DIED++;
         else breakdown.DIS++;
       }
 
-      // 3. Compute Patient Days spent inside this specific window
-      const stayStart = r.admissionDate > minDate ? r.admissionDate : minDate;
+      const stayStart = admDate > minDate ? admDate : minDate;
       let stayEnd: string;
-      if (isDischarged && r.dischargeDate) {
-        stayEnd = r.dischargeDate < maxDate ? r.dischargeDate : maxDate;
+      if (isDischarged && disDate) {
+        stayEnd = disDate < maxDate ? disDate : maxDate;
       } else {
         const activeCeil = todayStr < maxDate ? todayStr : maxDate;
         stayEnd = activeCeil >= stayStart ? activeCeil : stayStart;
@@ -400,7 +566,7 @@ export function getPeriodReport(startDate: string, endDate: string, customTitle?
   periodRecords.sort((a, b) => {
     if (a.status === 'Active' && b.status !== 'Active') return -1;
     if (a.status !== 'Active' && b.status === 'Active') return 1;
-    return b.admissionDate.localeCompare(a.admissionDate);
+    return String(b.admissionDate || '').localeCompare(String(a.admissionDate || ''));
   });
 
   const mortalityRate = dischargesCount > 0 ? parseFloat(((breakdown.DIED / dischargesCount) * 100).toFixed(1)) : 0;
@@ -429,18 +595,20 @@ export function getDashboardData(startMonth: string, endMonth: string): Dashboar
   if (!startMonth || !endMonth) return [];
 
   const results: DashboardMonthData[] = [];
-  
+
   const [startY, startM] = startMonth.split('-').map(Number);
   const [endY, endM] = endMonth.split('-').map(Number);
+  if (isNaN(startY) || isNaN(startM) || isNaN(endY) || isNaN(endM)) return [];
 
   let curY = startY;
   let curM = startM;
+  let guard = 0;
 
-  while (curY < endY || (curY === endY && curM <= endM)) {
+  while ((curY < endY || (curY === endY && curM <= endM)) && guard < 120) {
+    guard++;
     const monthKey = `${curY}-${String(curM).padStart(2, '0')}`;
     const report = getMonthlyReport(monthKey);
 
-    // Format human label e.g. "Nov 2026" or "2026-11"
     const dateObj = new Date(curY, curM - 1, 1);
     const monthName = dateObj.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 
@@ -467,65 +635,141 @@ const GAS_URL_KEY = 'waheed_icu_gas_url';
 export const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycby_35lnosnD9_tNBXdCtqaq6d8uHOoUShHq9SFow-PxHZHUC3uKwp28SzrxiL473uY3Vw/exec';
 
 export function getGoogleScriptUrl(): string {
-  return localStorage.getItem(GAS_URL_KEY) || DEFAULT_GAS_URL;
+  return safeLocalStorageGet(GAS_URL_KEY) || DEFAULT_GAS_URL;
 }
 
 export function setGoogleScriptUrl(url: string): void {
-  localStorage.setItem(GAS_URL_KEY, url.trim());
+  safeLocalStorageSet(GAS_URL_KEY, url.trim());
 }
 
 /**
- * Fetch and live-sync all patient records directly from Google Sheet CSV endpoint
+ * Cross-origin JSONP reader for public Google Sheets (works on static Vercel/mobile browsers without CORS proxy)
+ */
+function fetchGoogleSheetGvizJsonp(sheetId: string): Promise<any[][]> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('DOM unavailable'));
+      return;
+    }
+
+    const cbName = `__icuGvizCb_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const script = document.createElement('script');
+    let settled = false;
+
+    const cleanup = () => {
+      try {
+        delete (window as any)[cbName];
+      } catch {
+        (window as any)[cbName] = undefined;
+      }
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Timeout connecting to Google Sheet'));
+    }, 10000);
+
+    (window as any)[cbName] = (payload: any) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      cleanup();
+
+      if (!payload || payload.status === 'error' || !payload.table) {
+        reject(new Error(payload?.errors?.[0]?.detailed_message || 'Invalid Google Sheet response'));
+        return;
+      }
+
+      const cols = (payload.table.cols || []).map((c: any) => c.label || c.id || '');
+      const rawRows = (payload.table.rows || []).map((row: any) =>
+        (row.c || []).map((cell: any) => {
+          if (!cell) return '';
+          if (cell.f !== undefined && cell.f !== null && String(cell.f).trim() !== '') return String(cell.f);
+          return cell.v !== undefined && cell.v !== null ? String(cell.v) : '';
+        })
+      );
+
+      resolve([cols, ...rawRows]);
+    };
+
+    script.onerror = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      cleanup();
+      reject(new Error('Network error loading Google Sheet'));
+    };
+
+    script.src = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json;responseHandler:${cbName}`;
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * Fetch and live-sync all patient records directly from Google Sheet
  */
 export async function syncFromGoogleSheetLive(
   sheetIdOrUrl = '1xEBExHwdTPIBouJKDTC_zZePXRCTtn_A6AoFaxmSCTk'
 ): Promise<{ success: boolean; count: number; error?: string }> {
   try {
-    let csvText = '';
+    const match = sheetIdOrUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    const id = match ? match[1] : sheetIdOrUrl.trim();
+    let rows: any[][] = [];
 
-    // 1. Try local Vite server proxy first (avoids browser CORS)
+    // 1. Try local Vite server proxy first (dev environment)
     try {
       const proxyRes = await fetch('/api/sync-sheet');
-      if (proxyRes.ok) {
+      const contentType = proxyRes.headers.get('content-type') || '';
+      if (proxyRes.ok && !contentType.includes('text/html')) {
         const text = await proxyRes.text();
-        if (text && text.includes('Medical No')) {
-          csvText = text;
+        if (text && (text.includes('Medical No') || text.includes('Patient Name'))) {
+          const wb = XLSX.read(text, { type: 'string' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
         }
       }
     } catch {
       // Proxy unavailable in static hosting
     }
 
-    // 2. Fallback to direct URL if proxy was not used
-    if (!csvText) {
+    // 2. Try cross-origin gviz JSONP (works on Vercel / mobile browsers without CORS!)
+    if (!rows || rows.length <= 1) {
       try {
-        const match = sheetIdOrUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-        const id = match ? match[1] : sheetIdOrUrl.trim();
-        const csvUrl = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`;
-        const res = await fetch(csvUrl);
-        if (res.ok) {
-          csvText = await res.text();
-        }
+        rows = await fetchGoogleSheetGvizJsonp(id);
       } catch {
-        // Direct browser fetch blocked by CORS; handled gracefully below
+        // Fallback to direct CSV if CORS allows
       }
     }
 
-    if (!csvText) {
+    // 3. Fallback direct CSV fetch
+    if (!rows || rows.length <= 1) {
+      try {
+        const csvUrl = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`;
+        const res = await fetch(csvUrl);
+        if (res.ok) {
+          const csvText = await res.text();
+          if (csvText && !csvText.trim().startsWith('<')) {
+            const wb = XLSX.read(csvText, { type: 'string' });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+          }
+        }
+      } catch {
+        // Direct browser fetch blocked
+      }
+    }
+
+    if (!rows || rows.length <= 1) {
       return {
         success: false,
         count: 0,
-        error: 'Unable to reach Google Sheet directly from browser without authentication.',
+        error: 'تعذر الوصول المباشر إلى Google Sheet من المتصفح، يتم عرض البيانات المحفوظة محلياً.',
       };
-    }
-
-    const wb = XLSX.read(csvText, { type: 'string' });
-    const firstSheetName = wb.SheetNames[0];
-    const sheet = wb.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1 });
-
-    if (!rows || rows.length <= 1) {
-      return { success: false, count: 0, error: 'Google Sheet is empty or has only headers' };
     }
 
     const parsedList: PatientRecord[] = [];
@@ -540,54 +784,35 @@ export async function syncFromGoogleSheetLive(
       const rawStatus = String(r[3] || '').trim().toLowerCase();
       const status: PatientStatus =
         rawStatus === 'active' || rawStatus === 'منوم' ? 'Active' : 'Discharged';
-      const admDate = String(r[4] || '').trim();
-      const admTime = String(r[5] || '12:00').trim();
-      const fromLoc = String(r[6] || '').trim();
-      const diag = String(r[7] || '').trim();
-      const pu = String(r[8] || 'None').trim();
-      const disDate = String(r[9] || '').trim();
-      const disTime = String(r[10] || '').trim();
-      let disStatus = String(r[11] || '').trim();
 
-      if (disStatus.toUpperCase() === 'DIED') disStatus = 'DIED';
-      else if (disStatus.toUpperCase().startsWith('TRANS')) disStatus = 'Trans';
-      else if (disStatus.toUpperCase().startsWith('DAMA')) disStatus = 'DAMA';
-      else if (disStatus.toUpperCase() === 'DIS') disStatus = 'DIS';
-
-      const transLoc = String(r[12] || '').trim();
-      const disReason = String(r[13] || '').trim();
-      const rawStay = String(r[14] || '').replace(/[^0-9]/g, '');
-      const stay = rawStay ? parseInt(rawStay, 10) : undefined;
-
-      parsedList.push({
+      const norm = normalizeRecord({
         id: uid,
         medicalNo: mno,
         patientName: name,
         status,
-        admissionDate: admDate,
-        admissionTime: admTime,
-        fromLocation: fromLoc,
-        diagnosis: diag,
-        pu: pu || 'None',
-        dischargeDate: disDate || undefined,
-        dischargeTime: disTime || undefined,
-        dischargeStatus: (disStatus as any) || undefined,
-        transferLocation: transLoc || undefined,
-        dischargeReason: disReason || undefined,
-        lengthOfStay: stay,
-      });
+        admissionDate: r[4],
+        admissionTime: r[5] || '12:00',
+        fromLocation: r[6],
+        diagnosis: r[7],
+        pu: r[8] || 'None',
+        dischargeDate: r[9],
+        dischargeTime: r[10],
+        dischargeStatus: r[11],
+        transferLocation: r[12],
+        dischargeReason: r[13],
+        lengthOfStay: r[14],
+      }, i);
+
+      if (norm) parsedList.push(norm);
     }
 
     if (parsedList.length > 0) {
       saveStoredRecords(parsedList);
       return { success: true, count: parsedList.length };
     } else {
-      return { success: false, count: 0, error: 'No valid patient rows found' };
+      return { success: false, count: 0, error: 'لم يتم العثور على صفوف مرضى صالحة في الشيت' };
     }
   } catch (err: any) {
     return { success: false, count: 0, error: err?.message || 'Failed to sync from Sheet' };
   }
 }
-
-
-
