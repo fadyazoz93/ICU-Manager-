@@ -875,47 +875,57 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ lang }) => {
           {/* ======================================================== */}
           {/* OFFICIAL SIGNATURES & STAMP BLOCK (Visible on Print)    */}
           {/* ======================================================== */}
-          <div className="report-signature-block pt-6 border-t border-slate-300 print-avoid-break">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center text-xs text-slate-700">
+          <div className="report-signature-block pt-6 border-t border-slate-300 print-avoid-break w-full">
+            <div className="report-signature-grid grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-4 sm:gap-6 text-center text-xs text-slate-700 w-full">
               {/* ICU Head */}
-              <div className="p-4 rounded-xl border border-dashed border-slate-300 space-y-4">
-                <div className="font-bold text-slate-900 text-sm">
-                  {isAr ? 'رئيس قسم العناية المركزة' : 'Head of ICU Department'}
+              <div className="p-4 rounded-xl border border-dashed border-slate-300 flex flex-col justify-between min-h-[140px]">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">
+                    {isAr ? 'رئيس قسم العناية المركزة' : 'Head of ICU Department'}
+                  </div>
+                  <div className="text-slate-400 italic text-[11px] mt-1">
+                    {isAr ? 'التوقيع والاعتماد' : 'Signature & Approval'}
+                  </div>
                 </div>
-                <div className="text-slate-400 italic text-[11px]">
-                  {isAr ? 'التوقيع والاعتماد' : 'Signature & Approval'}
-                </div>
-                <div className="pt-6 border-b border-slate-300" />
-                <div className="text-[10px] text-slate-400">
-                  {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                <div className="space-y-2 mt-6">
+                  <div className="border-b border-slate-300" />
+                  <div className="text-[10px] text-slate-400">
+                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  </div>
                 </div>
               </div>
 
               {/* Medical Records / Census Officer */}
-              <div className="p-4 rounded-xl border border-dashed border-slate-300 space-y-4">
-                <div className="font-bold text-slate-900 text-sm">
-                  {isAr ? 'مسؤول التعداد والسجلات الطبية' : 'Medical Records & Census Officer'}
+              <div className="p-4 rounded-xl border border-dashed border-slate-300 flex flex-col justify-between min-h-[140px]">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">
+                    {isAr ? 'مسؤول التعداد والسجلات الطبية' : 'Medical Records & Census Officer'}
+                  </div>
+                  <div className="text-slate-400 italic text-[11px] mt-1">
+                    {isAr ? 'مراجعة وتدقيق البيانات' : 'Audited & Verified By'}
+                  </div>
                 </div>
-                <div className="text-slate-400 italic text-[11px]">
-                  {isAr ? 'مراجعة وتدقيق البيانات' : 'Audited & Verified By'}
-                </div>
-                <div className="pt-6 border-b border-slate-300" />
-                <div className="text-[10px] text-slate-400">
-                  {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                <div className="space-y-2 mt-6">
+                  <div className="border-b border-slate-300" />
+                  <div className="text-[10px] text-slate-400">
+                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  </div>
                 </div>
               </div>
 
               {/* Medical Director & Stamp */}
-              <div className="p-4 rounded-xl border border-dashed border-slate-300 space-y-4">
+              <div className="p-4 rounded-xl border border-dashed border-slate-300 flex flex-col justify-between min-h-[140px]">
                 <div className="font-bold text-slate-900 text-sm">
                   {isAr ? 'اعتماد المدير الطبي للمستشفى' : 'Medical Director Approval'}
                 </div>
-                <div className="w-16 h-16 mx-auto rounded-full border-2 border-slate-300 flex items-center justify-center text-slate-300 text-[10px] font-bold">
+                <div className="w-14 h-14 mx-auto my-2 rounded-full border-2 border-slate-300 flex items-center justify-center text-slate-300 text-[10px] font-bold">
                   {isAr ? 'الختم الرسمي' : 'Official Stamp'}
                 </div>
-                <div className="pt-1 border-b border-slate-300" />
-                <div className="text-[10px] text-slate-400">
-                  {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                <div className="space-y-2">
+                  <div className="border-b border-slate-300" />
+                  <div className="text-[10px] text-slate-400">
+                    {isAr ? 'التاريخ: .... / .... / 2026 م' : 'Date: .... / .... / 2026'}
+                  </div>
                 </div>
               </div>
             </div>

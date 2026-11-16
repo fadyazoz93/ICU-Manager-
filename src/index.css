@@ -78,12 +78,18 @@
 
   /* Printable signature block */
   .report-signature-block {
-    display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: 20px !important;
-    margin-top: 30px !important;
+    display: block !important;
+    width: 100% !important;
+    margin-top: 24px !important;
     break-inside: avoid !important;
     page-break-inside: avoid !important;
+  }
+
+  .report-signature-grid {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 16px !important;
+    width: 100% !important;
   }
 }
 
